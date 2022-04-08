@@ -1,5 +1,8 @@
-
-# READ ME for LumoSQL ABE-SSS
+---
+title: LumoSQL ABE-SSS
+author: Martina Palmucci
+date: \today
+---
 
 ## Introduction
 LumoSQL is an ambitious project that aims to bring encrypted storage modes to SQLite embedded databases, while keeping the standard SQL-GRANT syntax. In this context, encryption is one of the major problems. LumoSQL not only strives for data confidentiality, but also for more fine-grained data protection. It aspires to be able to encrypt the whole database as well as single tables or columns. The above said contributes to support the ambitious nature of this objective and the complexity of the issues involved. In fact, current solutions only offer a full encryption database with a unique key.
