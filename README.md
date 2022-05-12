@@ -5,6 +5,7 @@ date: \today
 ---
 
 ## Introduction
+
 LumoSQL is an ambitious project that aims to bring encrypted storage modes to SQLite embedded databases, while keeping the standard SQL-GRANT syntax. In this context, encryption is one of the major problems. LumoSQL not only strives for data confidentiality, but also for more fine-grained data protection. It aspires to be able to encrypt the whole database as well as single tables or columns. The above said contributes to support the ambitious nature of this objective and the complexity of the issues involved. In fact, current solutions only offer a full encryption database with a unique key.
 
 Attribute-Based Encryption-Shamir's Secret Sharing (ABE-SSS) is part of LumoSQL project.
@@ -31,6 +32,8 @@ Interpolation can be used to obtain $a_0$ from any subset of $t$ of these pairs.
 $$ L(x):=\sum_{j=0}^{t-1}y_jl_j(x) \bmod q$$ of Lagrange basis polynomials
 $$ l_j(x):=\prod_{\begin{array}{cc} 0\le m\le t\\ m\ne j \end{array}} 
 \frac{x-x_m} {x_j-x_m} $$ where $0\le j\le t$.
+
+[comment] <> Add how it was done: library, etc
 
 ## Attribute Based Encryption
 

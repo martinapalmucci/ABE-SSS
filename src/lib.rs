@@ -1,4 +1,4 @@
-// mod main;
+// Lagrange interpolation
 use curve25519_dalek_ng::scalar::Scalar;
 
 pub fn lagrange_interpolate(x: Scalar, points: &[(Scalar, Scalar)]) -> Scalar {
