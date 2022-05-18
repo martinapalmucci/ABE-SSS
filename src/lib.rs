@@ -1,6 +1,8 @@
-// Lagrange interpolation
+use rand_core::OsRng;
 use curve25519_dalek_ng::scalar::Scalar;
 
+// Lagrange interpolation
+#[must_use]
 pub fn lagrange_interpolate(x: Scalar, points: &[(Scalar, Scalar)]) -> Scalar {
     let mut y: Scalar = Scalar::zero();
 
@@ -25,6 +27,79 @@ fn lagrange_polynomial(j: usize, points: &[(Scalar, Scalar)], x: Scalar) -> Scal
 
     l_j
 }
+
+
+
+// SSS algorithm
+
+fn generate_random_vector(length: u32) -> Vec<Scalar> {
+    /*  generates a random vector with
+        "length" number of elements
+    */
+    let mut csprng = OsRng;
+
+    let mut vec: Vec<Scalar> = Vec::new();
+    for _ in 0..length {
+        let v_i = Scalar::random(&mut csprng);
+        vec.push(v_i);
+    }
+    vec
+}
+
+fn evaluate_polynomial(polynomial: &[Scalar], x: Scalar) -> Scalar {
+    /*  returns the y-coordinates evaluated on a
+        polinomial "p" in the x-coordinates "x"
+    */
+
+    let mut y: Scalar = Scalar::zero();
+
+    let mut curr_exp = Scalar::one();
+    for a_i in polynomial {
+        y += a_i * curr_exp;
+        curr_exp *= x;
+    }
+
+    y
+}
+
+fn get_shares(x_vec: &[Scalar], polynomial: &[Scalar]) -> Vec<(Scalar, Scalar)> {
+    /* reshapes the format of coordinates into points
+     */
+
+    let mut shares = Vec::<(Scalar, Scalar)>::new();
+
+    for x_i in x_vec {
+        let y_i = evaluate_polynomial(polynomial, *x_i);
+        let share: (Scalar, Scalar) = (*x_i, y_i);
+        shares.push(share);
+    }
+
+    shares
+}
+
+#[must_use]
+pub fn make_random_shares(secret: Scalar, threshold: u32, n_shares: u32) -> Vec<(Scalar, Scalar)> {
+    /* makes random shares
+     */
+
+    // check if threshold < n_shares
+
+    let mut p = vec![secret];
+    p.extend(generate_random_vector(threshold - 1));
+
+    let x_coordinate = generate_random_vector(n_shares);
+    get_shares(&x_coordinate, &p)
+}
+
+#[must_use]
+pub fn recover_secret(shares: &[(Scalar, Scalar)], threshold: u32) -> Scalar {
+    
+    // check if n_shares >= threshold
+
+    lagrange_interpolate(Scalar::zero(), shares)
+}
+
+
 
 #[cfg(test)]
 mod tests {
@@ -51,5 +126,18 @@ mod tests {
         let ret = lagrange_interpolate(Scalar::one(), &points);
 
         assert_eq!(ret, rnd);
+    }
+
+    #[test]
+    fn sss_test() {
+        let threshold = 3; let n_shares = 6; // is it ok here?
+
+        let mut csprng = OsRng;
+        let secret = Scalar::random(&mut csprng);
+
+        let shares = make_random_shares(secret, threshold, n_shares);
+        let recov_secret = recover_secret(&shares, threshold);
+
+        assert_eq!(secret, recov_secret);
     }
 }
