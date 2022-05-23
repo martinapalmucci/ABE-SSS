@@ -1,11 +1,15 @@
-use rand_core::OsRng;
 use curve25519_dalek_ng::scalar::Scalar;
+use rand_core::OsRng;
 
 // SSS algorithm
 
 // Making random shares
 #[must_use]
-pub fn make_random_shares(secret: Scalar, threshold: usize, n_shares: usize) -> Vec<(Scalar, Scalar)> {
+pub fn make_random_shares(
+    secret: Scalar,
+    threshold: usize,
+    n_shares: usize,
+) -> Vec<(Scalar, Scalar)> {
     /* makes random shares
      */
 
@@ -62,7 +66,6 @@ fn evaluate_polynomial(polynomial: &[Scalar], x: Scalar) -> Scalar {
 // Recovering secret
 #[must_use]
 pub fn recover_secret(shares: &[(Scalar, Scalar)], threshold: usize) -> Scalar {
-    
     // check if n_shares >= threshold
 
     lagrange_interpolate(Scalar::zero(), shares)
@@ -93,7 +96,6 @@ fn lagrange_polynomial(j: usize, points: &[(Scalar, Scalar)], x: Scalar) -> Scal
     l_j
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,7 +125,8 @@ mod tests {
 
     #[test]
     fn sss_test() {
-        let threshold = 3; let n_shares = 6; // try with multiple sets
+        let threshold = 3;
+        let n_shares = 6; // try with multiple sets
 
         let mut csprng = OsRng;
         let secret = Scalar::random(&mut csprng);
