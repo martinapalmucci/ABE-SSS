@@ -30,8 +30,8 @@ Since everyone who receives a share also has to know the value of $q$, it may be
 
 Interpolation can be used to obtain $a_0$ from any subset of $t$ of these pairs. Lagrange interpolation is formulated as follows. Given a set of $t$ points $(x_0, y_0), \cdots, (x_{t-1}, y_{t-1})$, where no two $x_j$ are the same, the interpolation polynomial in the Lagrange form is a linear combination 
 $$ L(x):=\sum_{j=0}^{t-1}y_jl_j(x) \bmod q$$ of Lagrange basis polynomials
-$$ l_j(x):=\prod_{\begin{array}{cc} 0\le m\le t\\ m\ne j \end{array}} 
-\frac{x-x_m} {x_j-x_m} $$ where $0\le j\le t$.
+$$ l_j(x):=\prod_{\begin{array}{cc} 0\le m\le t\\ m\ne j \end{array}} \frac{x-x_m} {x_j-x_m} $$ 
+where $0\le j\le t$.
 
 [comment] <> Add how it was done: library, etc
 
