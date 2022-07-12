@@ -81,6 +81,8 @@ fn main() {
                                  // }
                                  //
                                  // let nonce = get_nonce(&R);
+                                 //
+                                 // or maybe ad hash function from 32 bytes to 12 bytes
 
     // Define the message to be encrypted
 
@@ -92,7 +94,7 @@ fn main() {
         .encrypt(Nonce::from_slice(nonce), original_msg.as_bytes().as_ref())
         .expect("encryption failure!"); // NOTE: handle this error to avoid panics!
 
-    // DESCRIPTION
+    // DECRYPTION
 
     // Initialize the cipher with its key
     // using private attribute key (x) and random point (R) information
