@@ -8,115 +8,108 @@ use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce}; // Or `XChaCha20Poly1305`
 use curve25519_dalek_ng::constants;
 use curve25519_dalek_ng::ristretto::{CompressedRistretto, RistrettoPoint};
 
-use std::collections::HashMap;
-use std::str;
-
 fn generate_keypair(csprng: &mut OsRng) -> (Scalar, RistrettoPoint) {
     let private_key = Scalar::random(csprng);
     let public_key = &private_key * &constants::RISTRETTO_BASEPOINT_TABLE;
     (private_key, public_key)
 }
 
-fn example_keypairs() -> HashMap<String, (Scalar, RistrettoPoint)> {
-    let list_of_attributes = ["attr_r", "attr_s", "attr_p", "attr_q"];
-
-    let mut attr_keypairs = HashMap::new();
-
-    let mut csprng = OsRng;
-
-    for attribute in list_of_attributes {
-        let keypair = generate_keypair(&mut csprng);
-        attr_keypairs.insert(attribute.to_string(), keypair);
-    }
-    attr_keypairs
-}
-
 fn main() {
+    // Before the encryption / decryption system
+
     let mut csprng = OsRng;
+    let attribute_keypair = generate_keypair(&mut csprng);
 
-    // Create an example with attribute keypairs as hash map.
-    // The example attributes are:
-    //  - attr_r
-    //  - attr_s
-    //  - attr_p
-    //  - attr_q
+    // Encryption process
 
-    let attr_keypairs = example_keypairs();
+    let attribute_pbk = attribute_keypair.1;
 
-    // Let's try encryption and decreption the attribute "attr_r".
+    let ephemeral_keypair = generate_keypair(&mut csprng);
+    //let (ephemeral_pkc, ephemeral_pbk) = ephemeral_keypair;
 
-    let an_attr = "attr_r";
-
-    // Get private (x) and public (X) keys related to the attribute attr_r
-
-    let (x, X) = attr_keypairs.get(an_attr).unwrap();
-
-    // Generate a random number (r) and a random point (R) to use in the process
-
-    let (r, R) = generate_keypair(&mut csprng);
-
-    // ENCRYPTION
-
-    fn get_cipher_key(scalar: &Scalar, point: &RistrettoPoint) -> CompressedRistretto {
-        let cipher_key = (scalar * point).compress();
-        cipher_key
+    fn KDF(pkc: &Scalar, pbk: &RistrettoPoint) -> [u8; 32] {
+        (pkc * pbk).compress().to_bytes()
     }
 
-    // Initialize the cipher with its key
-    // using random number (r) and public attribute key (X) information
+    let ephemeral_pkc = ephemeral_keypair.0;
+    let cipher_key = KDF(&ephemeral_pkc, &attribute_pbk);
 
-    let cipher_key = get_cipher_key(&r, X);
-    let cipher = ChaCha20Poly1305::new(Key::from_slice(cipher_key.as_bytes()));
+    fn encrypt(plaintext: &[u8], cipher_key: &[u8; 32]) -> Vec<u8> {
+        let key = Key::from_slice(cipher_key);
+        let cipher = ChaCha20Poly1305::new(key);
 
-    // Get the nonce
+        let ciphertext = cipher
+            .encrypt(&Nonce::default(), plaintext.as_ref())
+            .expect("encryption failure!"); // NOTE: handle this error to avoid panics!
 
-    let nonce = b"unique nonce"; // I used this for now.
-                                 // However, I would like to add R into the nonce value
-                                 //
-                                 // something like:
-                                 //
-                                 // fn get_nonce(point: &RistrettoPoint) -> &[u8] {
-                                 //     let nonce = point.compress().as_bytes();
-                                 //     nonce.get(0..12).unwrap() // 12-bytes; unique per message
-                                 // }
-                                 //
-                                 // let nonce = get_nonce(&R);
-                                 //
-                                 // or maybe ad hash function from 32 bytes to 12 bytes
+        ciphertext
+    }
 
-    // Define the message to be encrypted
+    let original_text = b"plaintext message";
+    let ciphertext = encrypt(original_text, &cipher_key);
 
-    let original_msg = "plaintext message";
+    fn write_ciphertext(ciphertext: &Vec<u8>) -> Vec<u8> {
+        ciphertext.clone()
+    }
 
-    // Encrypt the message
+    fn write_pbk(pbk: &RistrettoPoint) -> Vec<u8> {
+        pbk.compress().to_bytes().to_vec()
+    }
 
-    let ciphertext = cipher
-        .encrypt(Nonce::from_slice(nonce), original_msg.as_bytes().as_ref())
-        .expect("encryption failure!"); // NOTE: handle this error to avoid panics!
+    fn write_message(ciphertext: &Vec<u8>, pbk: &RistrettoPoint) -> Vec<u8> {
+        let mut message: Vec<u8> = Vec::new();
+        message.append(&mut write_ciphertext(ciphertext));
+        message.append(&mut write_pbk(pbk));
+        message
+    }
 
-    // DECRYPTION
+    let ephemeral_pbk = ephemeral_keypair.1;
 
-    // Initialize the cipher with its key
-    // using private attribute key (x) and random point (R) information
+    let message = write_message(&ciphertext, &ephemeral_pbk);
 
-    let cipher_key = get_cipher_key(x, &R);
-    let cipher = ChaCha20Poly1305::new(Key::from_slice(cipher_key.as_bytes()));
+    assert_eq!(
+        message.len(),
+        write_ciphertext(&ciphertext).len() + write_pbk(&ephemeral_pbk).len()
+    );
 
-    // Get the nonce
+    // Decryption process
 
-    let nonce = b"unique nonce"; // to be changed with random point (R) information.
-                                 // Look at nonce in encryption section.
+    let attribute_pkc = attribute_keypair.0;
 
-    // Decrypt the ciphertext
+    fn read_ciphertext(message: &Vec<u8>) -> Vec<u8> {
+        message[0..(message.len() - 32)].to_vec()
+    }
 
-    let plaintext = cipher
-        .decrypt(Nonce::from_slice(nonce), ciphertext.as_ref())
-        .expect("decryption failure!"); // NOTE: handle this error to avoid panics!
+    fn read_pbk(message: &Vec<u8>) -> RistrettoPoint {
+        let pbk = &message[(message.len() - 32)..message.len()];
+        let pbk = <[u8; 32]>::try_from(pbk).unwrap();
+        CompressedRistretto(pbk).decompress().unwrap()
+    }
 
-    // Check if original message and decrypted message are the same
+    fn read_message(message: &Vec<u8>) -> (Vec<u8>, RistrettoPoint) {
+        let ciphertext = read_ciphertext(message);
+        let pbk = read_pbk(message);
+        (ciphertext, pbk)
+    }
 
-    let plaintext_msg = str::from_utf8(&plaintext).unwrap();
-    assert_eq!(original_msg, plaintext_msg);
+    let (ciphertext, ephemeral_pbk) = read_message(&message);
+
+    let cipher_key = KDF(&attribute_pkc, &ephemeral_pbk);
+
+    fn decrypt(ciphertext: &[u8], cipher_key: &[u8; 32]) -> Vec<u8> {
+        let key = Key::from_slice(cipher_key);
+        let cipher = ChaCha20Poly1305::new(key);
+
+        let plaintext = cipher
+            .decrypt(&Nonce::default(), ciphertext.as_ref())
+            .expect("encryption failure!"); // NOTE: handle this error to avoid panics!
+
+        plaintext
+    }
+
+    let plaintext = decrypt(&ciphertext, &cipher_key);
+
+    assert_eq!(plaintext, original_text.to_vec())
 }
 
 // GENERATE THE SECRET TREE
