@@ -2,6 +2,8 @@ use abe_sss::make_random_shares;
 use curve25519_dalek_ng::scalar::Scalar;
 use rand_core::OsRng;
 
+use std::vec;
+
 #[derive(Debug, Clone)]
 struct Node<T> {
     name: u32,
@@ -18,10 +20,13 @@ impl Node<AttributeNode> {
     ///
     /// * `self` - attribute root of attribute tree
     /// * `secret_point` - secret point of the secret root
+    /// * `csprng` - cryptographically secure pseudorandom number generator
     ///
     /// # Example
     ///
     /// ```
+    /// let mut csprng = OsRng;
+    ///
     /// let root = Node {
     ///     name: 1,  
     ///     value: AttributeNode::Leaf(String::from("attr_")),
@@ -29,9 +34,13 @@ impl Node<AttributeNode> {
     /// };
     ///
     /// let secret_point = (Scalar::zero(), Scalar::one());
-    /// let secret_root = root.generate_shares(&secret_point);
+    /// let secret_root = root.generate_shares(&secret_point, &mut csprng);
     /// ```
-    pub fn generate_shares(&self, secret_point: &(Scalar, Scalar)) -> Node<(Scalar, Scalar)> {
+    pub fn generate_shares(
+        &self,
+        secret_point: &(Scalar, Scalar),
+        csprng: &mut OsRng,
+    ) -> Node<(Scalar, Scalar)> {
         let mut list_children = vec![];
 
         if let AttributeNode::Branch(t) = self.value {
@@ -39,10 +48,10 @@ impl Node<AttributeNode> {
             let n_shares = self.children.len();
             let (_, secret) = secret_point;
 
-            let shares = make_random_shares(*secret, threshold, n_shares);
+            let shares = make_random_shares(csprng, *secret, threshold, n_shares);
 
             for (child, share) in self.children.iter().zip(&shares) {
-                let secret_child = child.generate_shares(share);
+                let secret_child = child.generate_shares(share, csprng);
                 list_children.push(secret_child);
             }
         }
@@ -107,7 +116,7 @@ fn main() {
     let secret = Scalar::random(&mut csprng);
     let secret_point = (Scalar::zero(), secret);
 
-    let secret_root = root.generate_shares(&secret_point);
+    let secret_root = root.generate_shares(&secret_point, &mut csprng);
 
     //println!("Secret Tree =\n{:#?}", secret_root);
 }
