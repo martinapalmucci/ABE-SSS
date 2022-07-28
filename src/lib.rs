@@ -1,7 +1,15 @@
-// use thiserror:Error;
+use std::io::{Error, ErrorKind};
+
+use thiserror::Error;
 
 use chacha20poly1305::{
-    aead::{Aead, NewAead},
+    aead::{
+        generic_array::{
+            typenum::{Sum, TypeArray},
+            GenericArray,
+        },
+        Aead, NewAead,
+    },
     ChaCha20Poly1305, Key, Nonce,
 };
 use curve25519_dalek_ng::{
@@ -24,17 +32,18 @@ use rand_core::OsRng;
 ///
 #[must_use]
 pub fn make_random_shares(
-    csprng: &mut OsRng,
     secret: Scalar,
     threshold: usize,
     n_shares: usize,
 ) -> Vec<(Scalar, Scalar)> {
     assert!((1 <= threshold) & (threshold <= n_shares));
 
-    let mut polynomial = vec![secret];
-    polynomial.extend(generate_random_vector(threshold - 1, csprng));
+    let mut csprng = OsRng;
 
-    let x_coordinates = generate_random_vector(n_shares, csprng);
+    let mut polynomial = vec![secret];
+    polynomial.extend(generate_random_vector(threshold - 1, &mut csprng));
+
+    let x_coordinates = generate_random_vector(n_shares, &mut csprng);
     get_points(&x_coordinates, &polynomial)
 }
 
@@ -104,7 +113,7 @@ fn get_points(x_coordinates: &[Scalar], polynomial: &[Scalar]) -> Vec<(Scalar, S
 ///
 /// let a_0 = Scalar::one();
 /// let a_1 = Scalar::one() + Scalar::one();
-/// let p: Vec<Scalar> = vec![a_0, a_1];        // f(x) = 2x + 1
+/// let p: Vec<Scalar> = vec![a_0, a_1];        // f(x) = a_1 * x + a_0 = 2x + 1
 ///
 /// let x = Scalar::zero();                     // x = 0
 /// let y = evaluate_polynomial(&p, x);         // y = 1
@@ -133,7 +142,7 @@ pub fn recover_secret(shares: &[(Scalar, Scalar)], threshold: usize) -> Scalar {
 /// Returns the result of the Lagrange interpolation.
 ///
 fn lagrange_interpolate(x: Scalar, points: &[(Scalar, Scalar)]) -> Scalar {
-    let mut y: Scalar = Scalar::zero();
+    let mut y: Scalar = Scalar::default();
 
     for (j, (_, y_j)) in points.iter().enumerate() {
         let l_j = lagrange_polynomial(j, points, x);
@@ -218,8 +227,9 @@ fn key_derivation_fn(pkc: &Scalar, pbk: &RistrettoPoint) -> [u8; 32] {
 /// * `pbk` - receiver's public key
 ///
 #[must_use]
-pub fn process_encryption(csprng: &mut OsRng, plaintext: &[u8], pbk: &RistrettoPoint) -> Vec<u8> {
-    let ephemeral_keypair = generate_keypair(csprng);
+pub fn process_encryption(plaintext: &[u8], pbk: &RistrettoPoint) -> Vec<u8> {
+    let mut csprng = OsRng;
+    let ephemeral_keypair = generate_keypair(&mut csprng);
     let (ephemeral_pkc, ephemeral_pbk) = ephemeral_keypair;
 
     let cipher_key = key_derivation_fn(&ephemeral_pkc, &pbk);
@@ -260,6 +270,12 @@ fn write_message(ciphertext: &Vec<u8>, pbk: &RistrettoPoint) -> Vec<u8> {
     message
 }
 
+#[derive(Error, Debug)]
+pub enum DecryptionError {
+    #[error("invalid message")]
+    InvalidMessage,
+}
+
 /// Reads the message to get ciphertext and sender's public key.
 ///
 /// Derives the decryption key and decrypts the ciphertext taken as input.
@@ -271,10 +287,17 @@ fn write_message(ciphertext: &Vec<u8>, pbk: &RistrettoPoint) -> Vec<u8> {
 /// * `message` - received message
 ///
 #[must_use]
-pub fn process_decryption(message: &Vec<u8>, pkc: &Scalar) -> Vec<u8> {
-    let (ciphertext, ephemeral_pbk) = read_message(&message);
-    let cipher_key = key_derivation_fn(&pkc, &ephemeral_pbk);
-    decrypt(ciphertext, &cipher_key)
+pub fn process_decryption(message: &[u8], pkc: &Scalar) -> Result<Vec<u8>, DecryptionError> {
+    let (ciphertext, pbk) = read_message(message);
+
+    match pbk {
+        Some(pbk) => {
+            let cipher_key = key_derivation_fn(&pkc, &pbk);
+            let plaintext = decrypt(ciphertext, &cipher_key);
+            Ok(plaintext)
+        }
+        None => Err(DecryptionError::InvalidMessage),
+    }
 }
 
 /// Returns the ciphertext and the sender's public key contained in message.
@@ -283,11 +306,9 @@ pub fn process_decryption(message: &Vec<u8>, pkc: &Scalar) -> Vec<u8> {
 ///
 /// * `message` - message to be read
 ///
-fn read_message(message: &Vec<u8>) -> (&[u8], RistrettoPoint) {
-    let ciphertext = &message[..message.len() - 32];
-    let pbk = CompressedRistretto::from_slice(&message[message.len() - 32..])
-        .decompress()
-        .unwrap();
+fn read_message(message: &[u8]) -> (&[u8], Option<RistrettoPoint>) {
+    let (ciphertext, pbk) = message.split_at(message.len() - 32);
+    let pbk = CompressedRistretto::from_slice(pbk).decompress();
     (ciphertext, pbk)
 }
 
@@ -308,6 +329,27 @@ fn decrypt(ciphertext: &[u8], cipher_key: &[u8; 32]) -> Vec<u8> {
 
     plaintext
 }
+
+pub fn concat_arrays<const N: usize, const M: usize>(fst: [u8; N], snd: [u8; M]) -> Vec<u8> {
+    let mut result = Vec::new();
+    for n in 0..(N + M) {
+        let cond = n < N;
+        let i = if cond { n } else { n - N };
+        let value = (cond as u8) * fst[i] + (!cond as u8) * snd[i];
+        result.push(value)
+    }
+    result
+}
+
+// pub fn split_arrays(concat: [u8; 64]) -> ([u8; 32], [u8; 32]) {
+//     let mut s1: [u8; 32] = [0; 32];
+//     let mut s2: [u8; 32] = [0; 32];
+//     for n in 0..32 {
+//         s1[n] = concat[n];
+//         s2[n] = concat[n + 32];
+//     }
+//     (s1, s2)
+// }
 
 #[cfg(test)]
 mod tests {
@@ -344,7 +386,7 @@ mod tests {
         let mut csprng = OsRng;
         let secret = Scalar::random(&mut csprng);
 
-        let shares = make_random_shares(&mut csprng, secret, threshold, n_shares);
+        let shares = make_random_shares(secret, threshold, n_shares);
         let recov_secret = recover_secret(&shares, threshold);
 
         assert_eq!(secret, recov_secret);
@@ -360,13 +402,13 @@ mod tests {
         // Encryption process
 
         let attribute_pbk = attribute_keypair.1;
-        let message = process_encryption(&mut csprng, original_text, &attribute_pbk);
+        let message = process_encryption(original_text, &attribute_pbk);
 
         // Decryption process
 
         let attribute_pkc = attribute_keypair.0;
         let plaintext = process_decryption(&message, &attribute_pkc);
 
-        assert_eq!(plaintext, original_text.to_vec());
+        assert_eq!(plaintext.unwrap(), original_text.to_vec());
     }
 }
