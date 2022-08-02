@@ -1,6 +1,6 @@
 use abe_sss::{
-    concat_arrays, generate_keypair, make_random_shares, process_decryption, process_encryption,
-    recover_secret,
+    chain_point, generate_keypair, generate_public_key, make_random_shares, process_decryption,
+    process_encryption, recover_secret,
 };
 use curve25519_dalek_ng::{constants, ristretto::RistrettoPoint, scalar::Scalar};
 use rand_core::OsRng;
@@ -15,113 +15,66 @@ struct Node<T> {
 }
 
 impl Node<AttributeNode> {
-    /// Returns a secret root of a secret tree.
-    ///
-    /// The structure of the returned secret tree is the same as the attribute tree with self as root.
-    ///
-    /// # Arguments
-    ///
-    /// * `self` - attribute root of attribute tree
-    /// * `secret_point` - secret point of the secret root
-    /// * `csprng` - cryptographically secure pseudorandom number generator
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// let mut csprng = OsRng;
-    ///
-    /// let root = Node {
-    ///     name: 1,  
-    ///     value: AttributeNode::Leaf(String::from("attr_")),
-    ///     children: vec![],
-    /// };
-    ///
-    /// let secret_point = (Scalar::zero(), Scalar::one());
-    /// let secret_root = root.generate_shares(&secret_point, &mut csprng);
-    /// ```
-    pub fn generate_shares(&self, secret_point: &(Scalar, Scalar)) -> Node<SecretNode> {
-        let mut list_children = vec![];
-
-        if let AttributeNode::Branch(t) = self.value {
-            let shares = make_random_shares(secret_point.1, t, self.children.len());
-
-            for (child, share) in self.children.iter().zip(&shares) {
-                let secret_child = child.generate_shares(share);
-                list_children.push(secret_child);
-            }
-        }
-
-        Node {
-            name: self.name,
-            value: SecretNode::Plain(secret_point.clone()),
-            children: list_children,
-        }
-    }
-
-    pub fn generate_shares_and_encrypt(
+    /// Generates the secret tree and
+    /// encrypts every node with the correct public key
+    pub fn generate_encrypted_shares(
         &self,
         secret_point: &(Scalar, Scalar),
-        publickeypairs: &HashMap<String, RistrettoPoint>,
+        public_keypairs: &HashMap<String, RistrettoPoint>,
     ) -> Node<SecretNode> {
         let mut list_children = vec![];
 
-        match &self.value {
-            AttributeNode::Branch(t) => {
-                let shares = make_random_shares(secret_point.1, *t, self.children.len());
-
-                for (child, share) in self.children.iter().zip(&shares) {
-                    let secret_child = child.generate_shares_and_encrypt(share, publickeypairs);
-                    list_children.push(secret_child);
-                }
-
-                let concat_secret =
-                    concat_arrays(secret_point.0.to_bytes(), secret_point.1.to_bytes());
-
-                let private_key = secret_point.1;
-                let generator = constants::RISTRETTO_BASEPOINT_TABLE;
-                let public_key = &private_key * &generator;
-                let encoded_secret = process_encryption(&concat_secret, &public_key);
-                Node {
-                    name: self.name,
-                    value: SecretNode::Encoded(encoded_secret),
-                    children: list_children,
-                }
+        if let AttributeNode::Branch(t) = &self.value {
+            let shares = make_random_shares(secret_point.1, *t, self.children.len());
+            for (child, share) in self.children.iter().zip(&shares) {
+                let secret_child = child.generate_encrypted_shares(share, public_keypairs);
+                list_children.push(secret_child);
             }
-            AttributeNode::Leaf(a) => {
-                let concat_secret =
-                    concat_arrays(secret_point.0.to_bytes(), secret_point.1.to_bytes());
-                let attr_pbk = publickeypairs.get(a).unwrap();
-                let encoded_secret = process_encryption(&concat_secret, attr_pbk);
-                Node {
-                    name: self.name,
-                    value: SecretNode::Encoded(encoded_secret),
-                    children: list_children,
-                }
-            }
-        }
+        };
+
+        let new_node = Node {
+            name: self.name,
+            value: SecretNode::Plain(*secret_point),
+            children: list_children,
+        };
+
+        let pbk = match &self.value {
+            AttributeNode::Branch(_) => generate_public_key(&secret_point.1), // derived public key
+            AttributeNode::Leaf(a) => *public_keypairs.get(a).unwrap(), // attribute public key
+        };
+
+        new_node.encode(&pbk)
     }
 }
 
 impl Node<SecretNode> {
-    pub fn encode(&mut self, attribute_pbk: &RistrettoPoint) {
-        if let SecretNode::Plain(share) = self.value {
-            let concat_share = concat_arrays(share.0.to_bytes(), share.1.to_bytes());
-            let encoded_share = process_encryption(&concat_share, &attribute_pbk);
-            self.value = SecretNode::Encoded(encoded_share);
-        }
-    }
-
-    pub fn decode(&self, attribute_pkc: &Scalar) -> Node<SecretNode> {
+    pub fn encode(&self, pbk: &RistrettoPoint) -> Node<SecretNode> {
         match &self.value {
-            SecretNode::Encoded(message) => {
-                let plain_share = process_decryption(&message, attribute_pkc).unwrap();
-                let (plain_share_x, plain_share_y) = plain_share.split_at(32);
-                let plain_share_x = Scalar::from_bits(<[u8; 32]>::try_from(plain_share_x).unwrap());
-                let plain_share_y = Scalar::from_bits(<[u8; 32]>::try_from(plain_share_y).unwrap());
+            SecretNode::Plain(point) => {
+                let plaintext = chain_point(point);
+                let encoded_secret = process_encryption(&plaintext, &pbk);
 
                 Node {
                     name: self.name,
-                    value: SecretNode::Plain((plain_share_x, plain_share_y)),
+                    value: SecretNode::Encoded(encoded_secret),
+                    children: self.children.clone(),
+                }
+            }
+            SecretNode::Encoded(_) => self.clone(),
+        }
+    }
+
+    pub fn decode(&self, pkc: &Scalar) -> Node<SecretNode> {
+        match &self.value {
+            SecretNode::Encoded(message) => {
+                let plain_share = process_decryption(&message, pkc).unwrap();
+                let plain_share = plain_share.split_at(32);
+                let plain_share_0 = Scalar::from_bits(<[u8; 32]>::try_from(plain_share.0).unwrap());
+                let plain_share_1 = Scalar::from_bits(<[u8; 32]>::try_from(plain_share.1).unwrap());
+
+                Node {
+                    name: self.name,
+                    value: SecretNode::Plain((plain_share_0, plain_share_1)),
                     children: self.children.clone(),
                 }
             }
@@ -129,7 +82,8 @@ impl Node<SecretNode> {
         }
     }
 
-    /// Ritorna soltanto la radice modificata, il resto rimane cifrato
+    /// The secret tree is partially reconstruct.
+    /// Only the secret root is available.
     pub fn recover_shares_and_decrypt(
         &self,
         privatekeypairs: &HashMap<String, Scalar>,
@@ -160,49 +114,6 @@ impl Node<SecretNode> {
             }
         }
     }
-
-    /// Trascrive tutti i risultati sul nuovo albero
-    pub fn recover_shares_and_decrypt_2(
-        &self,
-        privatekeypairs: &HashMap<String, Scalar>,
-        attribute_root: &Node<AttributeNode>,
-    ) -> Node<SecretNode> {
-        match &attribute_root.value {
-            AttributeNode::Branch(t) => {
-                let mut list_children = vec![];
-                for (child, attr_child) in self.children.iter().zip(&attribute_root.children) {
-                    let new_child = child.recover_shares_and_decrypt_2(privatekeypairs, attr_child);
-                    list_children.push(new_child);
-                }
-
-                let mut shares: Vec<(Scalar, Scalar)> = Vec::new();
-                for child in &list_children {
-                    if let SecretNode::Plain(share) = &child.value {
-                        shares.push(*share);
-                    }
-                }
-
-                if t <= &shares.len() {
-                    let secret = recover_secret(&shares, *t);
-                    Node {
-                        name: self.name,
-                        value: self.decode(&secret).value,
-                        children: list_children,
-                    }
-                } else {
-                    Node {
-                        name: self.name,
-                        value: self.value.clone(),
-                        children: list_children,
-                    }
-                }
-            }
-            AttributeNode::Leaf(a) => match privatekeypairs.get(a) {
-                Some(private_key) => self.decode(private_key),
-                None => self.clone(),
-            },
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -220,22 +131,29 @@ enum SecretNode {
 fn main() {
     let mut csprng = OsRng;
 
+    // println!("The attribute tree is generated.");
     let root = attribute_tree_example();
-    //println!("Plain Text Tree =\n{:#?}", root);
+    // println!("Attribute Tree =\n{:#?}", root);
 
+    // println!("Set a key k_0 as secret.");
     let secret = Scalar::random(&mut csprng);
     let secret_point = (Scalar::zero(), secret);
 
+    // println!("The plain secret tree is generated.");
     // let secret_root = root.generate_shares(&secret_point);
     // println!("Plain secret Tree =\n{:#?}", secret_root);
 
+    // println!("Set every attribute keypairs.");
     let keypairs = attribute_keypairs_example();
-    let my_pkc = private_keys_example(&keypairs);
-    let my_pbk = public_keys_example(&keypairs);
 
-    let secret_root = root.generate_shares_and_encrypt(&secret_point, &my_pbk);
+    // println!("Generate and encrypt the secret tree.");
+    let my_pbk = public_keys_example(&keypairs);
+    let secret_root = root.generate_encrypted_shares(&secret_point, &my_pbk);
     // println!("Secret Tree =\n{:#?}", secret_root);
 
+    // println!("Partially reconstruct the secret tree.");
+    // println!("Only the secret root must be available.");
+    let my_pkc = private_keys_example(&keypairs);
     let dec_secret_root = secret_root.recover_shares_and_decrypt(&my_pkc, &root);
     // println!("Secret Tree =\n{:#?}", dec_secret_root);
 
@@ -244,19 +162,10 @@ fn main() {
     } else {
         println!("Cannot confront. Error.")
     }
-
-    let dec_secret_root_2 = secret_root.recover_shares_and_decrypt_2(&my_pkc, &root);
-    // println!("Secret Tree =\n{:#?}", dec_secret_root_2);
-
-    if let SecretNode::Plain(point) = dec_secret_root_2.value {
-        assert_eq!(secret_point, point);
-    } else {
-        println!("Cannot confront. Error.")
-    }
 }
 
-// nodi = 5 sì, 3 sì, 4 sì, 1 sì dovrebbero essere visibili. 6 no ok, 2 no ok
-
+/// Example of
+/// Attribute tree
 fn attribute_tree_example() -> Node<AttributeNode> {
     let leaf_r = Node {
         name: 5,
@@ -293,6 +202,8 @@ fn attribute_tree_example() -> Node<AttributeNode> {
     }
 }
 
+/// Example of
+/// Attribute keypairs in the system
 fn attribute_keypairs_example() -> HashMap<String, (Scalar, RistrettoPoint)> {
     let list_of_attributes = ["attr_r", "attr_s", "attr_p", "attr_q"];
 
@@ -307,6 +218,8 @@ fn attribute_keypairs_example() -> HashMap<String, (Scalar, RistrettoPoint)> {
     attr_keypairs
 }
 
+/// Example of
+/// Attribute PRIVATE keys the user has
 fn private_keys_example(
     keypairs: &HashMap<String, (Scalar, RistrettoPoint)>,
 ) -> HashMap<String, Scalar> {
@@ -321,6 +234,8 @@ fn private_keys_example(
     my_keys
 }
 
+/// Examples of
+/// Every attribute PUBLIC key in the system
 fn public_keys_example(
     keypairs: &HashMap<String, (Scalar, RistrettoPoint)>,
 ) -> HashMap<String, RistrettoPoint> {
@@ -329,50 +244,4 @@ fn public_keys_example(
         my_keys.insert(attribute.to_string(), keypair.1);
     }
     my_keys
-}
-
-fn plain_node_example() -> Node<SecretNode> {
-    Node {
-        name: 1,
-        value: SecretNode::Plain((Scalar::default(), Scalar::default())),
-        children: vec![],
-    }
-}
-
-fn encoded_node_example() -> Node<SecretNode> {
-    let pbk = RistrettoPoint::default();
-    let mut mynode = plain_node_example();
-    mynode.encode(&pbk);
-    mynode
-}
-
-fn TRIAL_concat_and_split_arrays() {
-    // Scrivre una funzione che presi due scalari li trasforma in un unica slice
-    // e poi fare il viceversa
-    let a = Scalar::zero();
-    let b = Scalar::zero();
-
-    let mut c: Vec<u8> = Vec::new();
-    c.extend_from_slice(a.as_bytes());
-    c.extend_from_slice(b.as_bytes());
-
-    // Scalar::from_bits(<[u8; 64]>::try_from(c).unwrap());
-
-    let (a_, b_) = c.split_at(32);
-    let a_1 = Scalar::from_bits(<[u8; 32]>::try_from(a_).unwrap());
-    let b_1 = Scalar::from_bits(<[u8; 32]>::try_from(b_).unwrap());
-
-    assert_eq!((a, b), (a_1, b_1));
-
-    // concat arrays
-
-    let a = Scalar::zero().to_bytes();
-    let b = Scalar::one().to_bytes();
-    let c = concat_arrays(a, b);
-
-    // println!("a = {:#?}", a);
-    // println!("b = {:#?}", b);
-    // println!("c = {:#?}", c);
-
-    let (a, b) = c.split_at(32);
 }

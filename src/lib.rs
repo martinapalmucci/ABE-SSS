@@ -184,9 +184,14 @@ fn lagrange_polynomial(j: usize, points: &[(Scalar, Scalar)], x: Scalar) -> Scal
 #[must_use]
 pub fn generate_keypair(csprng: &mut OsRng) -> (Scalar, RistrettoPoint) {
     let private_key = Scalar::random(csprng);
-    let generator = constants::RISTRETTO_BASEPOINT_TABLE;
-    let public_key = &private_key * &generator;
+    let public_key = generate_public_key(&private_key);
     (private_key, public_key)
+}
+
+pub fn generate_public_key(private_key: &Scalar) -> RistrettoPoint {
+    let generator = constants::RISTRETTO_BASEPOINT_TABLE;
+    let public_key = private_key * &generator;
+    public_key
 }
 
 /// Returns the symmetric cipher key for ECIES.
@@ -330,7 +335,13 @@ fn decrypt(ciphertext: &[u8], cipher_key: &[u8; 32]) -> Vec<u8> {
     plaintext
 }
 
-pub fn concat_arrays<const N: usize, const M: usize>(fst: [u8; N], snd: [u8; M]) -> Vec<u8> {
+pub fn chain_point(point: &(Scalar, Scalar)) -> Vec<u8> {
+    let fst = point.0.to_bytes();
+    let snd = point.1.to_bytes();
+    concat_arrays(fst, snd)
+}
+
+fn concat_arrays<const N: usize, const M: usize>(fst: [u8; N], snd: [u8; M]) -> Vec<u8> {
     let mut result = Vec::new();
     for n in 0..(N + M) {
         let cond = n < N;
@@ -340,16 +351,6 @@ pub fn concat_arrays<const N: usize, const M: usize>(fst: [u8; N], snd: [u8; M])
     }
     result
 }
-
-// pub fn split_arrays(concat: [u8; 64]) -> ([u8; 32], [u8; 32]) {
-//     let mut s1: [u8; 32] = [0; 32];
-//     let mut s2: [u8; 32] = [0; 32];
-//     for n in 0..32 {
-//         s1[n] = concat[n];
-//         s2[n] = concat[n + 32];
-//     }
-//     (s1, s2)
-// }
 
 #[cfg(test)]
 mod tests {
