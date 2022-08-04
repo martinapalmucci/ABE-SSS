@@ -48,11 +48,15 @@ where $0\le j\le t$.
 ## Errors
 
 In SSS algorithm:
-    In computing shares 
-    and In recover secret:
-    
-        * must be 1 <= threshold <= n_shares and threshold \in N
-        otherwise, do not have any sense (threshold out of range)
+    In computing shares:
+
+        * must be threshold >= 1 otherwise InvalidThreshold (threshold must be natural number)
+        * must be threshold <= n_shares otherwise InvalidSchema (threshold must not be greater then number of shares)
+
+    In recover secret:
+
+        * must be n_shares >= 1 otherwise InvalidShares (number of shares must not be less then one)
+        * must be n_shares >= threshold otherwise UnrecoverableSecret (number of shares must not be less then threshold)
 
 In Encryption/Decryption Message algorithm:
 

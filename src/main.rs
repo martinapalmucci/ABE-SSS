@@ -92,7 +92,7 @@ impl Node<SecretNode> {
         attribute_root: &Node<AttributeNode>,
     ) -> Node<SecretNode> {
         match &attribute_root.value {
-            AttributeNode::Branch(t) => {
+            AttributeNode::Branch(threshold) => {
                 let mut shares: Vec<(Scalar, Scalar)> = Vec::new();
                 for (child, attr_child) in self.children.iter().zip(&attribute_root.children) {
                     let new_child = child.recover_shares_and_decrypt(privatekeypairs, attr_child);
@@ -101,7 +101,7 @@ impl Node<SecretNode> {
                     }
                 }
 
-                match recover_secret(&shares, *t) {
+                match recover_secret(&shares, *threshold) {
                     Ok(secret) => self.decrypt(&secret),
                     Err(_) => self.clone(),
                 }

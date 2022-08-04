@@ -1,3 +1,4 @@
+use core::num;
 use std::io::{Error, ErrorKind};
 
 use thiserror::Error;
@@ -15,12 +16,20 @@ use rand_core::OsRng;
 
 #[derive(Error, Debug)]
 pub enum SSSError {
-    #[error("threshold out of range")]
-    ThresholdOutRange,
+    #[error("threshold must not be zero")]
+    InvalidThreshold,
+    #[error("must be threshold less then or equal to number of shares")]
+    InvalidSchema,
 }
 
-fn check_threshold(threshold: usize, number_shares: usize) -> bool {
-    (1 <= threshold) & (threshold <= number_shares)
+fn check_schema_errors(threshold: usize, number_shares: usize) -> Option<SSSError> {
+    if threshold < 1 {
+        Some(SSSError::InvalidThreshold)
+    } else if threshold <= number_shares {
+        None
+    } else {
+        Some(SSSError::InvalidSchema)
+    }
 }
 
 /// Returns the shares of Shamir's Secret Sharing algorithm.
@@ -37,15 +46,18 @@ pub fn make_random_shares(
     threshold: usize,
     number_shares: usize,
 ) -> Result<Vec<(Scalar, Scalar)>, SSSError> {
-    match check_threshold(threshold, number_shares) {
-        true => {
+    match check_schema_errors(threshold, number_shares) {
+        None => {
             let mut csprng = OsRng;
             let mut polynomial = vec![secret];
             polynomial.extend(gen_random_vec(&mut csprng, threshold - 1));
-            let shares = compute_random_points(&mut csprng, &polynomial, number_shares);
-            Ok(shares)
+            Ok(compute_random_points(
+                &mut csprng,
+                &polynomial,
+                number_shares,
+            ))
         }
-        _ => Err(SSSError::ThresholdOutRange),
+        Some(e) => Err(e),
     }
 }
 
@@ -103,9 +115,9 @@ fn evaluate_polynomial(polynomial: &[Scalar], x: Scalar) -> Scalar {
 /// Returns the recovered secret.
 #[must_use]
 pub fn recover_secret(shares: &[(Scalar, Scalar)], threshold: usize) -> Result<Scalar, SSSError> {
-    match check_threshold(threshold, shares.len()) {
-        true => Ok(lagrange_interpolate(Scalar::zero(), shares)),
-        _ => Err(SSSError::ThresholdOutRange),
+    match check_schema_errors(threshold, shares.len()) {
+        None => Ok(lagrange_interpolate(Scalar::zero(), shares)),
+        Some(e) => Err(e),
     }
 }
 
