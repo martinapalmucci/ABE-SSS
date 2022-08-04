@@ -1,6 +1,6 @@
 use abe_sss::{
     chain_point, generate_keypair, generate_public_key, make_random_shares, process_decryption,
-    process_encryption, recover_secret,
+    process_encryption, read_message, recover_secret, write_message,
 };
 use curve25519_dalek_ng::{ristretto::RistrettoPoint, scalar::Scalar};
 use rand_core::OsRng;
@@ -25,7 +25,7 @@ impl Node<AttributeNode> {
         let mut list_children = vec![];
 
         if let AttributeNode::Branch(t) = &self.value {
-            let shares = make_random_shares(secret_point.1, *t, self.children.len());
+            let shares = make_random_shares(secret_point.1, *t, self.children.len()).unwrap();
             for (child, share) in self.children.iter().zip(&shares) {
                 let secret_child = child.generate_encrypted_shares(share, public_keypairs);
                 list_children.push(secret_child);
@@ -43,31 +43,33 @@ impl Node<AttributeNode> {
             AttributeNode::Leaf(a) => *public_keypairs.get(a).unwrap(), // attribute public key
         };
 
-        new_node.encode(&pbk)
+        new_node.encrypt(&pbk)
     }
 }
 
 impl Node<SecretNode> {
-    pub fn encode(&self, pbk: &RistrettoPoint) -> Node<SecretNode> {
+    pub fn encrypt(&self, pbk: &RistrettoPoint) -> Node<SecretNode> {
         match &self.value {
-            SecretNode::Plain(point) => {
-                let plaintext = chain_point(point);
-                let encoded_secret = process_encryption(&plaintext, &pbk);
+            SecretNode::Plain(share) => {
+                let (encrypted_share, ephemeral_pbk) =
+                    process_encryption(&chain_point(share), &pbk);
+                let message = write_message(&encrypted_share, &ephemeral_pbk);
 
                 Node {
                     name: self.name,
-                    value: SecretNode::Encoded(encoded_secret),
+                    value: SecretNode::Encrypted(message),
                     children: self.children.clone(),
                 }
             }
-            SecretNode::Encoded(_) => self.clone(),
+            SecretNode::Encrypted(_) => self.clone(),
         }
     }
 
-    pub fn decode(&self, pkc: &Scalar) -> Node<SecretNode> {
+    pub fn decrypt(&self, pkc: &Scalar) -> Node<SecretNode> {
         match &self.value {
-            SecretNode::Encoded(message) => {
-                let plain_share = process_decryption(&message, pkc).unwrap();
+            SecretNode::Encrypted(message) => {
+                let (ciphertext, pbk) = read_message(message);
+                let plain_share = process_decryption(ciphertext, &pbk.unwrap(), pkc);
                 let plain_share = plain_share.split_at(32);
                 let plain_share_0 = Scalar::from_bits(<[u8; 32]>::try_from(plain_share.0).unwrap());
                 let plain_share_1 = Scalar::from_bits(<[u8; 32]>::try_from(plain_share.1).unwrap());
@@ -99,16 +101,14 @@ impl Node<SecretNode> {
                     }
                 }
 
-                if t <= &shares.len() {
-                    let secret = recover_secret(&shares, *t);
-                    self.decode(&secret)
-                } else {
-                    self.clone() //println!("No attribute to decrypt. Can't do anything."),
+                match recover_secret(&shares, *t) {
+                    Ok(secret) => self.decrypt(&secret),
+                    Err(_) => self.clone(),
                 }
             }
             AttributeNode::Leaf(a) => {
                 match privatekeypairs.get(a) {
-                    Some(private_key) => self.decode(private_key),
+                    Some(private_key) => self.decrypt(private_key),
                     _ => self.clone(), //println!("No attribute to decrypt. Can't do anything."),
                 }
             }
@@ -125,7 +125,7 @@ enum AttributeNode {
 #[derive(Debug, Clone)]
 enum SecretNode {
     Plain((Scalar, Scalar)),
-    Encoded(Vec<u8>),
+    Encrypted(Vec<u8>),
 }
 
 fn main() {

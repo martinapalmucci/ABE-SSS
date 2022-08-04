@@ -13,27 +13,40 @@ use curve25519_dalek_ng::{
 };
 use rand_core::OsRng;
 
+#[derive(Error, Debug)]
+pub enum SSSError {
+    #[error("threshold out of range")]
+    ThresholdOutRange,
+}
+
+fn check_threshold(threshold: usize, number_shares: usize) -> bool {
+    (1 <= threshold) & (threshold <= number_shares)
+}
+
 /// Returns the shares of Shamir's Secret Sharing algorithm.
 ///
 /// # Arguments
 ///
 /// * `secret` - constant term of the polynomial
 /// * `threshold` - degree of the polynomial
-/// * `n_shares` - number of shares (or points) to be generated
+/// * `number_shares` - number of shares (or points) to be generated
 ///
 #[must_use]
 pub fn make_random_shares(
     secret: Scalar,
     threshold: usize,
-    n_shares: usize,
-) -> Vec<(Scalar, Scalar)> {
-    assert!((1 <= threshold) & (threshold <= n_shares));
-
-    let mut csprng = OsRng;
-
-    let mut polynomial = vec![secret];
-    polynomial.extend(generate_random_vector(&mut csprng, threshold - 1));
-    compute_random_points(&mut csprng, &polynomial, n_shares)
+    number_shares: usize,
+) -> Result<Vec<(Scalar, Scalar)>, SSSError> {
+    match check_threshold(threshold, number_shares) {
+        true => {
+            let mut csprng = OsRng;
+            let mut polynomial = vec![secret];
+            polynomial.extend(gen_random_vec(&mut csprng, threshold - 1));
+            let shares = compute_random_points(&mut csprng, &polynomial, number_shares);
+            Ok(shares)
+        }
+        _ => Err(SSSError::ThresholdOutRange),
+    }
 }
 
 /// Returns a scalar random vector.
@@ -43,12 +56,8 @@ pub fn make_random_shares(
 /// * `csprng` - cryptographically secure pseudorandom number generator
 /// * `length` - number of elements in resulting vector
 ///
-fn generate_random_vector(csprng: &mut OsRng, length: usize) -> Vec<Scalar> {
-    let mut vec: Vec<Scalar> = Vec::new();
-    for _ in 0..length {
-        vec.push(Scalar::random(csprng))
-    }
-    vec
+fn gen_random_vec(csprng: &mut OsRng, length: usize) -> Vec<Scalar> {
+    (0..length).map(|_| Scalar::random(csprng)).collect()
 }
 
 /// Returns a vector of (x, y) points based of a polynomial.
@@ -65,7 +74,6 @@ fn compute_random_points(
     n_points: usize,
 ) -> Vec<(Scalar, Scalar)> {
     let mut points = Vec::<(Scalar, Scalar)>::new();
-
     for _ in 0..n_points {
         let x = Scalar::random(csprng);
         let y = evaluate_polynomial(polynomial, x);
@@ -93,16 +101,15 @@ fn evaluate_polynomial(polynomial: &[Scalar], x: Scalar) -> Scalar {
 }
 
 /// Returns the recovered secret.
-///
 #[must_use]
-pub fn recover_secret(shares: &[(Scalar, Scalar)], threshold: usize) -> Scalar {
-    assert!((1 <= threshold) & (threshold <= shares.len()));
-
-    lagrange_interpolate(Scalar::zero(), shares)
+pub fn recover_secret(shares: &[(Scalar, Scalar)], threshold: usize) -> Result<Scalar, SSSError> {
+    match check_threshold(threshold, shares.len()) {
+        true => Ok(lagrange_interpolate(Scalar::zero(), shares)),
+        _ => Err(SSSError::ThresholdOutRange),
+    }
 }
 
 /// Returns the result of the Lagrange interpolation.
-///
 fn lagrange_interpolate(x: Scalar, points: &[(Scalar, Scalar)]) -> Scalar {
     let mut y: Scalar = Scalar::default();
 
@@ -114,6 +121,7 @@ fn lagrange_interpolate(x: Scalar, points: &[(Scalar, Scalar)]) -> Scalar {
     y
 }
 
+/// Returns the result of the Lagrange polynomial
 fn lagrange_polynomial(j: usize, points: &[(Scalar, Scalar)], x: Scalar) -> Scalar {
     let mut l_j: Scalar = Scalar::one();
 
@@ -163,22 +171,8 @@ pub fn generate_public_key(private_key: &Scalar) -> RistrettoPoint {
 /// * `pkc` - sender's private key
 /// * `pbk` - receiver's public key
 ///
-/// # Example
-///
-/// ```
-/// let mut csprng = OsRng;
-/// let g = constants::RISTRETTO_BASEPOINT_TABLE;
-/// let Alice_pkc = Scalar::random(&mut csprng);
-/// let Alice_pbk = &Alice_pkc * &g;
-/// let Bob_pkc = Scalar::random(&mut csprng);
-/// let Bob_pbk = &Bob_pkc * &g;
-///
-/// let K_A = key_derivation_fn(&Alice_pkc, &Bob_pbk);
-/// let K_B = key_derivation_fn(&Bob_pkc, &Alice_pbk);
-/// assert_eq!(K_A, K_B)
-/// ```
-fn key_derivation_fn(pkc: &Scalar, pbk: &RistrettoPoint) -> [u8; 32] {
-    (pkc * pbk).compress().to_bytes()
+fn key_derivation_fn(private_key: &Scalar, public_key: &RistrettoPoint) -> [u8; 32] {
+    (private_key * public_key).compress().to_bytes()
 }
 
 /// Generates randomly an ephemeral private key, and its associated public key.
@@ -194,15 +188,14 @@ fn key_derivation_fn(pkc: &Scalar, pbk: &RistrettoPoint) -> [u8; 32] {
 /// * `pbk` - receiver's public key
 ///
 #[must_use]
-pub fn process_encryption(plaintext: &[u8], pbk: &RistrettoPoint) -> Vec<u8> {
+pub fn process_encryption(
+    plaintext: &[u8],
+    public_key: &RistrettoPoint,
+) -> (Vec<u8>, RistrettoPoint) {
     let mut csprng = OsRng;
-    let ephemeral_keypair = generate_keypair(&mut csprng);
-    let (ephemeral_pkc, ephemeral_pbk) = ephemeral_keypair;
-
-    let cipher_key = key_derivation_fn(&ephemeral_pkc, &pbk);
-    let ciphertext = encrypt(plaintext, &cipher_key);
-
-    write_message(&ciphertext, &ephemeral_pbk)
+    let (ephemeral_pkc, ephemeral_pbk) = generate_keypair(&mut csprng);
+    let ciphertext = encrypt(plaintext, &key_derivation_fn(&ephemeral_pkc, &public_key));
+    (ciphertext, ephemeral_pbk)
 }
 
 /// Returns the ciphertext.
@@ -223,26 +216,6 @@ fn encrypt(plaintext: &[u8], cipher_key: &[u8; 32]) -> Vec<u8> {
     ciphertext
 }
 
-/// Returns the concatenation of ciphertext and sender's public key.
-///
-/// # Arguments
-///
-/// * `ciphertext` - encrypted text
-/// * `pbk` - sender's public key
-///
-fn write_message(ciphertext: &Vec<u8>, pbk: &RistrettoPoint) -> Vec<u8> {
-    let mut message: Vec<u8> = Vec::new();
-    message.extend_from_slice(ciphertext);
-    message.extend_from_slice(&pbk.compress().to_bytes());
-    message
-}
-
-#[derive(Error, Debug)]
-pub enum DecryptionError {
-    #[error("invalid message")]
-    InvalidMessage,
-}
-
 /// Reads the message to get ciphertext and sender's public key.
 ///
 /// Derives the decryption key and decrypts the ciphertext taken as input.
@@ -254,29 +227,12 @@ pub enum DecryptionError {
 /// * `message` - received message
 ///
 #[must_use]
-pub fn process_decryption(message: &[u8], pkc: &Scalar) -> Result<Vec<u8>, DecryptionError> {
-    let (ciphertext, pbk) = read_message(message);
-
-    match pbk {
-        Some(pbk) => {
-            let cipher_key = key_derivation_fn(&pkc, &pbk);
-            let plaintext = decrypt(ciphertext, &cipher_key);
-            Ok(plaintext)
-        }
-        None => Err(DecryptionError::InvalidMessage),
-    }
-}
-
-/// Returns the ciphertext and the sender's public key contained in message.
-///
-/// # Arguments
-///
-/// * `message` - message to be read
-///
-fn read_message(message: &[u8]) -> (&[u8], Option<RistrettoPoint>) {
-    let (ciphertext, pbk) = message.split_at(message.len() - 32);
-    let pbk = CompressedRistretto::from_slice(pbk).decompress();
-    (ciphertext, pbk)
+pub fn process_decryption(
+    ciphertext: &[u8],
+    public_key: &RistrettoPoint,
+    private_key: &Scalar,
+) -> Vec<u8> {
+    decrypt(ciphertext, &key_derivation_fn(&private_key, &public_key))
 }
 
 /// Returns the plaintext.
@@ -295,6 +251,32 @@ fn decrypt(ciphertext: &[u8], cipher_key: &[u8; 32]) -> Vec<u8> {
         .expect("encryption failure!"); // NOTE: handle this error to avoid panics!
 
     plaintext
+}
+
+/// Returns the concatenation of ciphertext and sender's public key.
+///
+/// # Arguments
+///
+/// * `ciphertext` - encrypted text
+/// * `pbk` - sender's public key
+///
+pub fn write_message(ciphertext: &Vec<u8>, public_key: &RistrettoPoint) -> Vec<u8> {
+    let mut message: Vec<u8> = Vec::new();
+    message.extend_from_slice(ciphertext);
+    message.extend_from_slice(&public_key.compress().to_bytes());
+    message
+}
+
+/// Returns the ciphertext and the sender's public key contained in message.
+///
+/// # Arguments
+///
+/// * `message` - message to be read
+///
+pub fn read_message(message: &[u8]) -> (&[u8], Option<RistrettoPoint>) {
+    let (ciphertext, pbk) = message.split_at(message.len() - 32);
+    let pbk = CompressedRistretto::from_slice(pbk).decompress();
+    (ciphertext, pbk)
 }
 
 pub fn chain_point(point: &(Scalar, Scalar)) -> Vec<u8> {
@@ -349,8 +331,8 @@ mod tests {
         let mut csprng = OsRng;
         let secret = Scalar::random(&mut csprng);
 
-        let shares = make_random_shares(secret, threshold, n_shares);
-        let recov_secret = recover_secret(&shares, threshold);
+        let shares = make_random_shares(secret, threshold, n_shares).unwrap();
+        let recov_secret = recover_secret(&shares, threshold).unwrap();
 
         assert_eq!(secret, recov_secret);
     }
@@ -365,13 +347,13 @@ mod tests {
         // Encryption process
 
         let attribute_pbk = attribute_keypair.1;
-        let message = process_encryption(original_text, &attribute_pbk);
+        let (ciphertext, ephemeral_pbk) = process_encryption(original_text, &attribute_pbk);
 
         // Decryption process
 
         let attribute_pkc = attribute_keypair.0;
-        let plaintext = process_decryption(&message, &attribute_pkc);
+        let plaintext = process_decryption(&ciphertext, &ephemeral_pbk, &attribute_pkc);
 
-        assert_eq!(plaintext.unwrap(), original_text.to_vec());
+        assert_eq!(plaintext, original_text.to_vec());
     }
 }
