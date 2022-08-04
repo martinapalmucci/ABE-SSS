@@ -3,13 +3,7 @@ use std::io::{Error, ErrorKind};
 use thiserror::Error;
 
 use chacha20poly1305::{
-    aead::{
-        generic_array::{
-            typenum::{Sum, TypeArray},
-            GenericArray,
-        },
-        Aead, NewAead,
-    },
+    aead::{Aead, NewAead},
     ChaCha20Poly1305, Key, Nonce,
 };
 use curve25519_dalek_ng::{
@@ -19,13 +13,10 @@ use curve25519_dalek_ng::{
 };
 use rand_core::OsRng;
 
-/// Generates a random polynomial with constant term and degree fixed.
-///
-/// Returns the (x, y) points of that polynomial. Every point is a share based on Shamir's Secret Sharing algorithm.
+/// Returns the shares of Shamir's Secret Sharing algorithm.
 ///
 /// # Arguments
 ///
-/// * `csprng` - cryptographically secure pseudorandom number generator
 /// * `secret` - constant term of the polynomial
 /// * `threshold` - degree of the polynomial
 /// * `n_shares` - number of shares (or points) to be generated
@@ -41,59 +32,44 @@ pub fn make_random_shares(
     let mut csprng = OsRng;
 
     let mut polynomial = vec![secret];
-    polynomial.extend(generate_random_vector(threshold - 1, &mut csprng));
-
-    let x_coordinates = generate_random_vector(n_shares, &mut csprng);
-    get_points(&x_coordinates, &polynomial)
+    polynomial.extend(generate_random_vector(&mut csprng, threshold - 1));
+    compute_random_points(&mut csprng, &polynomial, n_shares)
 }
 
 /// Returns a scalar random vector.
 ///
 /// # Arguments
 ///
-/// * `length` - number of elements in resulting vector
 /// * `csprng` - cryptographically secure pseudorandom number generator
+/// * `length` - number of elements in resulting vector
 ///
-fn generate_random_vector(length: usize, csprng: &mut OsRng) -> Vec<Scalar> {
+fn generate_random_vector(csprng: &mut OsRng, length: usize) -> Vec<Scalar> {
     let mut vec: Vec<Scalar> = Vec::new();
     for _ in 0..length {
-        let v_i = Scalar::random(csprng);
-        vec.push(v_i);
+        vec.push(Scalar::random(csprng))
     }
     vec
 }
 
-/// Returns a vector of (x, y) points based of a polynomial and x coordinates.
+/// Returns a vector of (x, y) points based of a polynomial.
 ///
 /// # Arguments
 ///
-/// * `x_coordinates` - input coordinates
+/// * `csprng` - cryptographically secure pseudorandom number generato
 /// * `polynomial` - coefficients a_0, ..., a_n of the polynomial
+/// * `n_points` - number of points to be computed
 ///
-/// # Example
-///
-/// ```
-/// use curve25519_dalek_ng::scalar::Scalar;
-/// use abe_sss::get_points;
-///
-/// let two_as_scalar = Scalar::one() + Scalar::one();
-/// let three_as_scalar = two_as_scalar + Scalar::one();
-///
-/// let p: Vec<Scalar> = vec![Scalar::one(), two_as_scalar];    // f(x) = 2x + 1
-/// let x: Vec<Scalar> = vec![Scalar::zero(), Scalar::one()];   // x = [0, 1]
-///
-/// let points = get_points(&x, &p);                            // points(x, y) = [(0, 1), (1, 3)]
-///
-/// assert_eq!(points[0], (Scalar::zero(), Scalar::one()));
-/// assert_eq!(points[1], (Scalar::one(), three_as_scalar));
-/// ```
-fn get_points(x_coordinates: &[Scalar], polynomial: &[Scalar]) -> Vec<(Scalar, Scalar)> {
+fn compute_random_points(
+    csprng: &mut OsRng,
+    polynomial: &[Scalar],
+    n_points: usize,
+) -> Vec<(Scalar, Scalar)> {
     let mut points = Vec::<(Scalar, Scalar)>::new();
 
-    for x_i in x_coordinates {
-        let y_i = evaluate_polynomial(polynomial, *x_i);
-        let share: (Scalar, Scalar) = (*x_i, y_i);
-        points.push(share);
+    for _ in 0..n_points {
+        let x = Scalar::random(csprng);
+        let y = evaluate_polynomial(polynomial, x);
+        points.push((x, y));
     }
     points
 }
@@ -105,20 +81,6 @@ fn get_points(x_coordinates: &[Scalar], polynomial: &[Scalar]) -> Vec<(Scalar, S
 /// * `polynomial` - coefficients a_0, ..., a_n of the polynomial
 /// * `x` - input coordinate
 ///
-/// # Example
-///
-/// ```
-/// use curve25519_dalek_ng::scalar::Scalar;
-/// use abe_sss::evaluate_polynomial;
-///
-/// let a_0 = Scalar::one();
-/// let a_1 = Scalar::one() + Scalar::one();
-/// let p: Vec<Scalar> = vec![a_0, a_1];        // f(x) = a_1 * x + a_0 = 2x + 1
-///
-/// let x = Scalar::zero();                     // x = 0
-/// let y = evaluate_polynomial(&p, x);         // y = 1
-/// assert_eq!(y, Scalar::one());
-/// ```
 fn evaluate_polynomial(polynomial: &[Scalar], x: Scalar) -> Scalar {
     let mut y: Scalar = Scalar::zero();
 

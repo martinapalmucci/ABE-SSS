@@ -42,3 +42,31 @@ $$ l_j(x):=\prod_{\begin{array}{cc} 0\le m\le t\\ m\ne j \end{array}} \frac{x-x_
 where $0\le j\le t$.
 
 [comment] <> Add how it was done: library, etc
+
+
+
+## Errors
+
+In SSS algorithm:
+    In computing shares 
+    and In recover secret:
+    
+        * must be 1 <= threshold <= n_shares and threshold \in N
+        otherwise, do not have any sense (threshold out of range)
+
+In Encryption/Decryption Message algorithm:
+
+    In encryption:
+
+        * encryption failure
+
+    In decryption:
+
+        * invalid message read
+        * decryption failure
+        
+In Tree Generation/Ecryption/Decryption:
+
+    * attribute not in attribute_keypair_hashmap (in generate_encrypted_shares)
+    * conversion from &[u8] to Scalar (in decode)
+    * decryption failure, root is still encrypted

@@ -2,10 +2,10 @@ use abe_sss::{
     chain_point, generate_keypair, generate_public_key, make_random_shares, process_decryption,
     process_encryption, recover_secret,
 };
-use curve25519_dalek_ng::{constants, ristretto::RistrettoPoint, scalar::Scalar};
+use curve25519_dalek_ng::{ristretto::RistrettoPoint, scalar::Scalar};
 use rand_core::OsRng;
 
-use std::{collections::HashMap, error::Error, vec};
+use std::{collections::HashMap, vec};
 
 #[derive(Debug, Clone)]
 struct Node<T> {
@@ -224,6 +224,7 @@ fn private_keys_example(
     keypairs: &HashMap<String, (Scalar, RistrettoPoint)>,
 ) -> HashMap<String, Scalar> {
     let list_attribute = ["attr_r", "attr_p"];
+    //let list_attribute = ["attr_r"];
 
     let mut my_keys = HashMap::new();
 
