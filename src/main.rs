@@ -1,6 +1,6 @@
 use abe_sss::{
-    chain_point, generate_keypair, generate_public_key, make_random_shares, process_decryption,
-    process_encryption, read_message, recover_secret, write_message,
+    chain_point, generate_keypair, generate_public_key, process_decryption, process_encryption,
+    read_message, sss::give_me_five, sss::make_random_shares, sss::recover_secret, write_message,
 };
 use curve25519_dalek_ng::{ristretto::RistrettoPoint, scalar::Scalar};
 use rand_core::OsRng;
@@ -129,6 +129,8 @@ enum SecretNode {
 }
 
 fn main() {
+    println!("{}", give_me_five());
+
     let mut csprng = OsRng;
 
     // println!("The attribute tree is generated.");
