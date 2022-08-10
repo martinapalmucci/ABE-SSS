@@ -1,6 +1,6 @@
 use abe_sss::{
     chain_point, generate_keypair, generate_public_key, process_decryption, process_encryption,
-    read_message, sss::give_me_five, sss::make_random_shares, sss::recover_secret, write_message,
+    read_message, sss::SssSchema, write_message,
 };
 use curve25519_dalek_ng::{ristretto::RistrettoPoint, scalar::Scalar};
 use rand_core::OsRng;
@@ -25,7 +25,11 @@ impl Node<AttributeNode> {
         let mut list_children = vec![];
 
         if let AttributeNode::Branch(t) = &self.value {
-            let shares = make_random_shares(secret_point.1, *t, self.children.len()).unwrap();
+            let schema = SssSchema::new(*t, self.children.len());
+            let schema = schema.unwrap();
+
+            let shares = schema.make_random_shares(secret_point.1);
+
             for (child, share) in self.children.iter().zip(&shares) {
                 let secret_child = child.generate_encrypted_shares(share, public_keypairs);
                 list_children.push(secret_child);
@@ -101,10 +105,20 @@ impl Node<SecretNode> {
                     }
                 }
 
-                match recover_secret(&shares, *threshold) {
-                    Ok(secret) => self.decrypt(&secret),
+                let schema = SssSchema::new(*threshold, shares.len());
+
+                match schema {
+                    Ok(s) => {
+                        let secret = s.recover_secret(&shares);
+                        self.decrypt(&secret)
+                    }
                     Err(_) => self.clone(),
                 }
+
+                // match schema.recover_secret(&shares, *threshold) {
+                //     Ok(secret) => self.decrypt(&secret),
+                //     Err(_) => self.clone(),
+                // }
             }
             AttributeNode::Leaf(a) => {
                 match privatekeypairs.get(a) {
@@ -129,8 +143,6 @@ enum SecretNode {
 }
 
 fn main() {
-    println!("{}", give_me_five());
-
     let mut csprng = OsRng;
 
     // println!("The attribute tree is generated.");

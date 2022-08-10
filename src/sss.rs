@@ -2,10 +2,6 @@ use curve25519_dalek_ng::scalar::Scalar;
 use rand_core::OsRng;
 use thiserror::Error;
 
-pub fn give_me_five() -> usize {
-    5
-}
-
 #[derive(Error, Debug)]
 pub enum SSSError {
     #[error("threshold must not be zero")]
@@ -14,42 +10,49 @@ pub enum SSSError {
     InvalidSchema,
 }
 
-fn schema_errors(threshold: usize, number_shares: usize) -> Option<SSSError> {
-    if threshold < 1 {
-        Some(SSSError::InvalidThreshold)
-    } else if threshold > number_shares {
-        Some(SSSError::InvalidSchema)
-    } else {
-        None
-    }
-}
-
-/// Returns the shares of Shamir's Secret Sharing algorithm.
-///
-/// # Arguments
-///
-/// * `secret` - constant term of the polynomial
-/// * `threshold` - degree of the polynomial
-/// * `number_shares` - number of shares (or points) to be generated
-///
-#[must_use]
-pub fn make_random_shares(
-    secret: Scalar,
+#[derive(Debug, Clone)]
+pub struct SssSchema {
     threshold: usize,
     number_shares: usize,
-) -> Result<Vec<(Scalar, Scalar)>, SSSError> {
-    match schema_errors(threshold, number_shares) {
-        None => {
-            let mut csprng = OsRng;
-            let mut polynomial = vec![secret];
-            polynomial.extend(gen_random_vec(&mut csprng, threshold - 1));
-            Ok(compute_random_points(
-                &mut csprng,
-                &polynomial,
-                number_shares,
-            ))
+}
+
+impl SssSchema {
+    pub fn new(t: usize, n: usize) -> Result<Self, SSSError> {
+        if t < 1 {
+            Err(SSSError::InvalidThreshold)
+        } else if t > n {
+            Err(SSSError::InvalidSchema)
+        } else {
+            Ok(Self {
+                threshold: t,
+                number_shares: n,
+            })
         }
-        Some(e) => Err(e),
+    }
+
+    /// Returns the shares of Shamir's Secret Sharing algorithm.
+    ///
+    /// # Arguments
+    ///
+    /// * `secret` - constant term of the polynomial
+    ///
+    #[must_use]
+    pub fn make_random_shares(&self, secret: Scalar) -> Vec<(Scalar, Scalar)> {
+        let mut csprng = OsRng;
+        let mut polynomial = vec![secret];
+        polynomial.extend(gen_random_vec(&mut csprng, self.threshold - 1));
+        gen_random_points(&mut csprng, &polynomial, self.number_shares)
+    }
+
+    /// Returns the recovered secret.
+    ///
+    /// # Arguments
+    ///
+    /// * `shares` - points
+    ///
+    #[must_use]
+    pub fn recover_secret(&self, shares: &[(Scalar, Scalar)]) -> Scalar {
+        lagrange_interpolate(Scalar::zero(), shares)
     }
 }
 
@@ -59,7 +62,7 @@ fn gen_random_vec(csprng: &mut OsRng, length: usize) -> Vec<Scalar> {
 }
 
 /// Returns a vector of (x, y) points based of a polynomial.
-fn compute_random_points(
+fn gen_random_points(
     csprng: &mut OsRng,
     polynomial: &[Scalar],
     n_points: usize,
@@ -83,21 +86,6 @@ fn evaluate_polynomial(polynomial: &[Scalar], x: Scalar) -> Scalar {
         curr_exp *= x;
     }
     y
-}
-
-/// Returns the recovered secret.
-///
-/// # Arguments
-///
-/// * `shares` - points
-/// * `threshold` - minimum number of shares to recover the secret
-///
-#[must_use]
-pub fn recover_secret(shares: &[(Scalar, Scalar)], threshold: usize) -> Result<Scalar, SSSError> {
-    match schema_errors(threshold, shares.len()) {
-        None => Ok(lagrange_interpolate(Scalar::zero(), shares)),
-        Some(e) => Err(e),
-    }
 }
 
 /// Returns the result of the Lagrange interpolation.
@@ -161,8 +149,11 @@ mod tests {
         let mut csprng = OsRng;
         let secret = Scalar::random(&mut csprng);
 
-        let shares = make_random_shares(secret, threshold, n_shares).unwrap();
-        let recov_secret = recover_secret(&shares, threshold).unwrap();
+        let schema = SssSchema::new(threshold, n_shares);
+        let schema = schema.unwrap();
+
+        let shares = schema.make_random_shares(secret);
+        let recov_secret = schema.recover_secret(&shares);
 
         assert_eq!(secret, recov_secret);
     }
