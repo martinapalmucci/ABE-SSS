@@ -112,20 +112,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn encryption_decryption_test() {
+    fn encryption_decryption_test_1() {
         // Set system variables
         let keypairs = attribute_keypairs_example();
         let every_pubkeys = public_keys_example(&keypairs);
 
         // Set resource variables
-        let policy_tree = attribute_tree_example();
+        let policy_tree = policy_tree_example();
         let secret_share = Share::new(Scalar::zero(), Scalar::random(&mut OsRng));
 
         // Encrypt
         let encrypted_share_root = policy_tree.gen_encrypted_shares(&secret_share, &every_pubkeys);
 
         // Set user variables
-        let my_seckeys = private_keys_example(&keypairs);
+        let my_seckeys = private_keys_example_1(&keypairs);
 
         // Decrypt
         let decrypted_secret_share =
@@ -137,8 +137,37 @@ mod tests {
         );
     }
 
+    #[test]
+    #[should_panic]
+    fn encryption_decryption_test_2() {
+        // Set system variables
+        let keypairs = attribute_keypairs_example();
+        let every_pubkeys = public_keys_example(&keypairs);
+
+        // Set resource variables
+        let policy_tree = policy_tree_example();
+        let secret_share = Share::new(Scalar::zero(), Scalar::random(&mut OsRng));
+
+        // Encrypt
+        let encrypted_share_root = policy_tree.gen_encrypted_shares(&secret_share, &every_pubkeys);
+
+        // Set user variables
+        let my_seckeys = private_keys_example_2(&keypairs);
+
+        // Decrypt
+        let decrypted_secret_share =
+            encrypted_share_root.recover_secret_share(&policy_tree, &my_seckeys);
+
+        assert_eq!(
+            secret_share.serialize(),
+            decrypted_secret_share.unwrap().serialize()
+        );
+    }
+
+    
+
     /// Example of Policy Tree
-    fn attribute_tree_example() -> Node<PolicyNode> {
+    fn policy_tree_example() -> Node<PolicyNode> {
         let leaf_r = Node {
             name: 5,
             value: PolicyNode::Leaf(String::from("attr_r")),
@@ -187,12 +216,26 @@ mod tests {
         attr_keypairs
     }
 
-    /// Example of attribute PRIVATE keys the user has
-    fn private_keys_example(
+    /// Example 1 of attribute PRIVATE keys the user has
+    fn private_keys_example_1(
         keypairs: &HashMap<String, (Scalar, RistrettoPoint)>,
     ) -> HashMap<String, Scalar> {
         let list_attribute = ["attr_r", "attr_p"];
-        //let list_attribute = ["attr_r"];
+
+        let mut my_keys = HashMap::new();
+
+        for attribute in list_attribute {
+            let key = keypairs.get(attribute).unwrap().0;
+            my_keys.insert(attribute.to_string(), key);
+        }
+        my_keys
+    }
+
+    /// Example 2 of attribute PRIVATE keys the user has
+    fn private_keys_example_2(
+        keypairs: &HashMap<String, (Scalar, RistrettoPoint)>,
+    ) -> HashMap<String, Scalar> {
+        let list_attribute = ["attr_r"];
 
         let mut my_keys = HashMap::new();
 
