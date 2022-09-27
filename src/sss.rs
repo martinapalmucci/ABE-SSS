@@ -2,6 +2,89 @@ use curve25519_dalek_ng::scalar::Scalar;
 use rand_core::OsRng;
 use thiserror::Error;
 
+use crate::{concat_arrays, lagrange::lagrange_interpolate};
+
+#[derive(Debug, Clone)]
+pub struct Share {
+    x: Scalar,
+    y: Scalar,
+}
+
+impl Share {
+    pub fn new(x: Scalar, y: Scalar) -> Share {
+        Share { x, y }
+    }
+
+    pub fn random(p: &Polynomial) -> Share {
+        let x = Scalar::random(&mut OsRng);
+        let y = p.evaluate(x);
+        Share::new(x, y)
+    }
+
+    pub fn parse_point(point: &(Scalar, Scalar)) -> Share {
+        Share {
+            x: point.0,
+            y: point.1,
+        }
+    }
+
+    pub fn parse_msg(msg: &[u8]) -> Share {
+        let (x, y) = msg.split_at(32);
+        let x = Scalar::from_bits(<[u8; 32]>::try_from(x).unwrap());
+        let y = Scalar::from_bits(<[u8; 32]>::try_from(y).unwrap());
+
+        Share { x, y }
+    }
+
+    pub fn serialize(&self) -> (Scalar, Scalar) {
+        (self.x, self.y)
+    }
+
+    pub fn serialize_chain(&self) -> Vec<u8> {
+        let (x, y) = self.serialize();
+        concat_arrays(x.to_bytes(), y.to_bytes())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Polynomial {
+    coefficients: Vec<Scalar>, // from constant term to greater grade term
+}
+
+impl Polynomial {
+    pub fn random(degree: usize) -> Polynomial {
+        let coeffs = (0..degree).map(|_| Scalar::random(&mut OsRng)).collect();
+        Polynomial {
+            coefficients: coeffs,
+        }
+    }
+
+    pub fn from_constant_term(constant_term: Scalar, degree: usize) -> Polynomial {
+        let mut coeffs = Vec::with_capacity(degree);
+        coeffs.push(constant_term);
+
+        let a_i: Vec<Scalar> = (0..(degree - 1))
+            .map(|_| Scalar::random(&mut OsRng))
+            .collect();
+        coeffs.extend(a_i);
+
+        Polynomial {
+            coefficients: coeffs,
+        }
+    }
+
+    fn evaluate(&self, x: Scalar) -> Scalar {
+        let mut y: Scalar = Scalar::zero();
+
+        let mut curr_exp = Scalar::one();
+        for a_i in &self.coefficients {
+            y += a_i * curr_exp;
+            curr_exp *= x;
+        }
+        y
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum SSSError {
     #[error("threshold must not be zero")]
@@ -11,23 +94,29 @@ pub enum SSSError {
 }
 
 #[derive(Debug, Clone)]
-pub struct SssSchema {
+pub struct SSS {
     threshold: usize,
     number_shares: usize,
 }
 
-impl SssSchema {
+impl SSS {
     /// Returns the (t, n) - Shamir's Secret Sharing schema.
-    pub fn new(t: usize, n: usize) -> Result<Self, SSSError> {
-        if t < 1 {
+    ///
+    /// # Arguments
+    ///
+    /// * `threshold` - Threshold in SSS algorithm
+    /// * `number_shares` - Number of shares in SSS algorithm
+    pub fn new(threshold: usize, number_shares: usize) -> Result<Self, SSSError> {
+        if threshold < 1 {
             Err(SSSError::InvalidThreshold)
-        } else if t > n {
+        } else if threshold > number_shares {
             Err(SSSError::InvalidSchema)
         } else {
-            Ok(Self {
-                threshold: t,
-                number_shares: n,
-            })
+            let schema = Self {
+                threshold,
+                number_shares,
+            };
+            Ok(schema)
         }
     }
 
@@ -35,13 +124,17 @@ impl SssSchema {
     ///
     /// # Arguments
     ///
-    /// * `secret` - constant term of the polynomial
-    ///
+    /// * `secret` - A Scalar reference to the constant term of a polynomial
     #[must_use]
-    pub fn make_random_shares(&self, secret: Scalar) -> Vec<(Scalar, Scalar)> {
-        let mut polynomial = vec![secret];
-        polynomial.extend(gen_random_vec(self.threshold - 1));
-        gen_rand_points_from_polyn(&polynomial, self.number_shares)
+    pub fn make_random_shares(&self, secret: Scalar) -> Vec<Share> {
+        let p = Polynomial::from_constant_term(secret, self.threshold);
+
+        let mut shares: Vec<Share> = Vec::with_capacity(self.number_shares);
+        for _ in 0..self.number_shares {
+            let share = Share::random(&p);
+            shares.push(share)
+        }
+        shares
     }
 
     /// Returns the recovered secret.
@@ -49,65 +142,14 @@ impl SssSchema {
     /// # Arguments
     ///
     /// * `shares` - points
-    ///
     #[must_use]
-    pub fn recover_secret(&self, shares: &[(Scalar, Scalar)]) -> Scalar {
-        lagrange_interpolate(Scalar::zero(), shares)
+    pub fn recover_secret(&self, shares: &[Share]) -> Scalar {
+        let points = shares
+            .iter()
+            .map(|share| share.serialize())
+            .collect::<Vec<(Scalar, Scalar)>>();
+        lagrange_interpolate(Scalar::zero(), &points)
     }
-}
-
-/// Returns a scalar random vector.
-fn gen_random_vec(length: usize) -> Vec<Scalar> {
-    (0..length).map(|_| Scalar::random(&mut OsRng)).collect()
-}
-
-/// Returns a vector of (x, y) points based of a polynomial.
-fn gen_rand_points_from_polyn(polynomial: &[Scalar], n_points: usize) -> Vec<(Scalar, Scalar)> {
-    let mut points = Vec::<(Scalar, Scalar)>::new();
-    for _ in 0..n_points {
-        let x = Scalar::random(&mut OsRng);
-        let y = evaluate_polynomial(polynomial, x);
-        points.push((x, y));
-    }
-    points
-}
-
-/// Returns the evaluation of a polynomial in the x-coordinate.
-fn evaluate_polynomial(polynomial: &[Scalar], x: Scalar) -> Scalar {
-    let mut y: Scalar = Scalar::zero();
-
-    let mut curr_exp = Scalar::one();
-    for a_i in polynomial {
-        y += a_i * curr_exp;
-        curr_exp *= x;
-    }
-    y
-}
-
-/// Returns the result of the Lagrange interpolation.
-fn lagrange_interpolate(x: Scalar, points: &[(Scalar, Scalar)]) -> Scalar {
-    let mut y: Scalar = Scalar::default();
-
-    for (j, (_, y_j)) in points.iter().enumerate() {
-        let l_j = lagrange_polynomial(j, points, x);
-        y += y_j * l_j;
-    }
-
-    y
-}
-
-/// Returns the result of the Lagrange polynomial
-fn lagrange_polynomial(j: usize, points: &[(Scalar, Scalar)], x: Scalar) -> Scalar {
-    let mut l_j: Scalar = Scalar::one();
-
-    let x_j = points[j].0;
-
-    for (m, (x_m, _)) in points.iter().enumerate() {
-        if m != j {
-            l_j *= (x - x_m) * (x_j - x_m).invert();
-        }
-    }
-    l_j
 }
 
 #[cfg(test)]
@@ -117,32 +159,13 @@ mod tests {
     use rand_core::OsRng;
 
     #[test]
-    fn lagrange_interpolation_test() {
-        let rnd = Scalar::random(&mut OsRng);
-
-        let point0: (Scalar, Scalar) = (Scalar::zero(), Scalar::zero());
-        let point1: (Scalar, Scalar) = (Scalar::one(), rnd);
-        let two = Scalar::one() + Scalar::one();
-        let point2: (Scalar, Scalar) = (two, two * rnd);
-
-        let mut points = Vec::<(Scalar, Scalar)>::new();
-        points.push(point0);
-        points.push(point1);
-        points.push(point2);
-
-        let ret = lagrange_interpolate(Scalar::one(), &points);
-
-        assert_eq!(ret, rnd);
-    }
-
-    #[test]
     fn sss_test() {
         let threshold = 3;
         let n_shares = 6; // try with multiple sets
 
         let secret = Scalar::random(&mut OsRng);
 
-        let schema = SssSchema::new(threshold, n_shares);
+        let schema = SSS::new(threshold, n_shares);
         let schema = schema.unwrap();
 
         let shares = schema.make_random_shares(secret);

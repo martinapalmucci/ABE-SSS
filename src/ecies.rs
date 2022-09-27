@@ -12,8 +12,8 @@ use crate::{
 ///
 /// # Arguments
 ///
-/// * `public_key` - The RistrettoPoint reference of a receiver's public key
-/// * `plaintext` - The u8 array reference of the message to encrypt
+/// * `msg` - The u8 array reference of the message to encrypt
+/// * `receiver_pub` - The RistrettoPoint reference of a receiver's public key
 #[must_use]
 pub fn ecies_encrypt(msg: &[u8], receiver_pub: &RistrettoPoint) -> Vec<u8> {
     let (ephemeral_sk, ephemeral_pk) = generate_keypair();
