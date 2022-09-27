@@ -17,6 +17,7 @@ pub struct SssSchema {
 }
 
 impl SssSchema {
+    /// Returns the (t, n) - Shamir's Secret Sharing schema.
     pub fn new(t: usize, n: usize) -> Result<Self, SSSError> {
         if t < 1 {
             Err(SSSError::InvalidThreshold)
@@ -38,10 +39,9 @@ impl SssSchema {
     ///
     #[must_use]
     pub fn make_random_shares(&self, secret: Scalar) -> Vec<(Scalar, Scalar)> {
-        let mut csprng = OsRng;
         let mut polynomial = vec![secret];
-        polynomial.extend(gen_random_vec(&mut csprng, self.threshold - 1));
-        gen_random_points(&mut csprng, &polynomial, self.number_shares)
+        polynomial.extend(gen_random_vec(self.threshold - 1));
+        gen_rand_points_from_polyn(&polynomial, self.number_shares)
     }
 
     /// Returns the recovered secret.
@@ -57,19 +57,15 @@ impl SssSchema {
 }
 
 /// Returns a scalar random vector.
-fn gen_random_vec(csprng: &mut OsRng, length: usize) -> Vec<Scalar> {
-    (0..length).map(|_| Scalar::random(csprng)).collect()
+fn gen_random_vec(length: usize) -> Vec<Scalar> {
+    (0..length).map(|_| Scalar::random(&mut OsRng)).collect()
 }
 
 /// Returns a vector of (x, y) points based of a polynomial.
-fn gen_random_points(
-    csprng: &mut OsRng,
-    polynomial: &[Scalar],
-    n_points: usize,
-) -> Vec<(Scalar, Scalar)> {
+fn gen_rand_points_from_polyn(polynomial: &[Scalar], n_points: usize) -> Vec<(Scalar, Scalar)> {
     let mut points = Vec::<(Scalar, Scalar)>::new();
     for _ in 0..n_points {
-        let x = Scalar::random(csprng);
+        let x = Scalar::random(&mut OsRng);
         let y = evaluate_polynomial(polynomial, x);
         points.push((x, y));
     }
@@ -122,9 +118,7 @@ mod tests {
 
     #[test]
     fn lagrange_interpolation_test() {
-        let mut csprng = OsRng;
-
-        let rnd = Scalar::random(&mut csprng);
+        let rnd = Scalar::random(&mut OsRng);
 
         let point0: (Scalar, Scalar) = (Scalar::zero(), Scalar::zero());
         let point1: (Scalar, Scalar) = (Scalar::one(), rnd);
@@ -146,8 +140,7 @@ mod tests {
         let threshold = 3;
         let n_shares = 6; // try with multiple sets
 
-        let mut csprng = OsRng;
-        let secret = Scalar::random(&mut csprng);
+        let secret = Scalar::random(&mut OsRng);
 
         let schema = SssSchema::new(threshold, n_shares);
         let schema = schema.unwrap();

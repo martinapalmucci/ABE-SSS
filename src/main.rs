@@ -1,6 +1,8 @@
 use abe_sss::{
-    chain_point, generate_keypair, generate_public_key, process_decryption, process_encryption,
-    read_message, sss::SssSchema, write_message,
+    chain_point,
+    ecies::{ecies_decrypt, ecies_encrypt},
+    sss::SssSchema,
+    utils::{generate_keypair, generate_public_key},
 };
 use curve25519_dalek_ng::{ristretto::RistrettoPoint, scalar::Scalar};
 use rand_core::OsRng;
@@ -55,9 +57,7 @@ impl Node<SecretNode> {
     pub fn encrypt(&self, pbk: &RistrettoPoint) -> Node<SecretNode> {
         match &self.value {
             SecretNode::Plain(share) => {
-                let (encrypted_share, ephemeral_pbk) =
-                    process_encryption(&chain_point(share), &pbk);
-                let message = write_message(&encrypted_share, &ephemeral_pbk);
+                let message = ecies_encrypt(&chain_point(share), &pbk);
 
                 Node {
                     name: self.name,
@@ -72,8 +72,7 @@ impl Node<SecretNode> {
     pub fn decrypt(&self, pkc: &Scalar) -> Node<SecretNode> {
         match &self.value {
             SecretNode::Encrypted(message) => {
-                let (ciphertext, pbk) = read_message(message);
-                let plain_share = process_decryption(ciphertext, &pbk.unwrap(), pkc);
+                let plain_share = ecies_decrypt(message, pkc);
                 let plain_share = plain_share.split_at(32);
                 let plain_share_0 = Scalar::from_bits(<[u8; 32]>::try_from(plain_share.0).unwrap());
                 let plain_share_1 = Scalar::from_bits(<[u8; 32]>::try_from(plain_share.1).unwrap());
@@ -143,14 +142,12 @@ enum SecretNode {
 }
 
 fn main() {
-    let mut csprng = OsRng;
-
     // println!("The attribute tree is generated.");
     let root = attribute_tree_example();
     // println!("Attribute Tree =\n{:#?}", root);
 
     // println!("Set a key k_0 as secret.");
-    let secret = Scalar::random(&mut csprng);
+    let secret = Scalar::random(&mut OsRng);
     let secret_point = (Scalar::zero(), secret);
 
     // println!("The plain secret tree is generated.");
@@ -226,7 +223,7 @@ fn attribute_keypairs_example() -> HashMap<String, (Scalar, RistrettoPoint)> {
     let mut csprng = OsRng;
 
     for attribute in list_of_attributes {
-        let keypair = generate_keypair(&mut csprng);
+        let keypair = generate_keypair();
         attr_keypairs.insert(attribute.to_string(), keypair);
     }
     attr_keypairs
