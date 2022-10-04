@@ -75,50 +75,12 @@ impl Node<ShareNode> {
         policy_root: &Node<PolicyNode>,
         keypairs_sec: &HashMap<String, Scalar>,
     ) -> Option<Share> {
-        match &policy_root.value {
-            PolicyNode::Branch(threshold) => {
-                let mut shares: Vec<Share> = Vec::new();
-                let joined_trees_iter = self.children.iter().zip(&policy_root.children);
-                for (share_child, policy_child) in joined_trees_iter {
-                    let output = share_child.recover_secret_share(policy_child, keypairs_sec);
-                    if let Some(share) = &output {
-                        shares.push(share.clone());
-                    }
-                }
-                let schema = SSS::new(*threshold, shares.len());
-                match schema {
-                    Ok(valid_sss) => {
-                        let ecies_receiver_seckey = &valid_sss.recover_secret(&shares);
-                        let ciphertext = &self.value.encrypted_share;
-                        let msg = ecies_decrypt(ciphertext, ecies_receiver_seckey);
-                        Some(Share::parse_msg(&msg))
-                    }
-                    _ => None,
-                }
-            }
-            PolicyNode::Leaf(a) => match keypairs_sec.get(a) {
-                Some(attribute_seckey) => {
-                    let ecies_receiver_seckey = attribute_seckey;
-                    let ciphertext = &self.value.encrypted_share;
-                    let msg = ecies_decrypt(ciphertext, ecies_receiver_seckey);
-                    Some(Share::parse_msg(&msg))
-                }
-                _ => None,
-            },
-        }
-    }
-
-    pub fn recover_secret_share_2(
-        &self,
-        policy_root: &Node<PolicyNode>,
-        keypairs_sec: &HashMap<String, Scalar>,
-    ) -> Option<Share> {
         let ecies_receiver_seckey = match &policy_root.value {
             PolicyNode::Branch(threshold) => {
                 let mut shares: Vec<Share> = Vec::new();
                 let joined_trees_iter = self.children.iter().zip(&policy_root.children);
                 for (share_child, policy_child) in joined_trees_iter {
-                    let output = share_child.recover_secret_share_2(policy_child, keypairs_sec);
+                    let output = share_child.recover_secret_share(policy_child, keypairs_sec);
                     if let Some(share) = &output {
                         shares.push(share.clone());
                     }
@@ -170,7 +132,7 @@ mod tests {
 
         // Decrypt
         let decrypted_secret_share =
-            encrypted_share_root.recover_secret_share_2(&policy_tree, &my_seckeys);
+            encrypted_share_root.recover_secret_share(&policy_tree, &my_seckeys);
 
         assert_eq!(
             secret_share.serialize(),
@@ -198,7 +160,7 @@ mod tests {
 
         // Decrypt
         let decrypted_secret_share =
-            encrypted_share_root.recover_secret_share_2(&policy_tree, &my_seckeys);
+            encrypted_share_root.recover_secret_share(&policy_tree, &my_seckeys);
 
         assert_eq!(
             secret_share.serialize(),
