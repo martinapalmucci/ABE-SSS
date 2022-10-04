@@ -90,8 +90,7 @@ impl Node<ShareNode> {
                     Ok(valid_sss) => {
                         let ecies_receiver_seckey = &valid_sss.recover_secret(&shares);
                         let ciphertext = &self.value.encrypted_share;
-                        let msg =
-                            ecies_decrypt(ciphertext, ecies_receiver_seckey);
+                        let msg = ecies_decrypt(ciphertext, ecies_receiver_seckey);
                         Some(Share::parse_msg(&msg))
                     }
                     _ => None,
@@ -106,6 +105,42 @@ impl Node<ShareNode> {
                 }
                 _ => None,
             },
+        }
+    }
+
+    pub fn recover_secret_share_2(
+        &self,
+        policy_root: &Node<PolicyNode>,
+        keypairs_sec: &HashMap<String, Scalar>,
+    ) -> Option<Share> {
+        let ecies_receiver_seckey = match &policy_root.value {
+            PolicyNode::Branch(threshold) => {
+                let mut shares: Vec<Share> = Vec::new();
+                let joined_trees_iter = self.children.iter().zip(&policy_root.children);
+                for (share_child, policy_child) in joined_trees_iter {
+                    let output = share_child.recover_secret_share_2(policy_child, keypairs_sec);
+                    if let Some(share) = &output {
+                        shares.push(share.clone());
+                    }
+                }
+                match SSS::new(*threshold, shares.len()) {
+                    Ok(sss_schema) => Some(sss_schema.recover_secret(&shares)),
+                    _ => None,
+                }
+            }
+            PolicyNode::Leaf(a) => match keypairs_sec.get(a) {
+                Some(attribute_seckey) => Some(attribute_seckey.clone()),
+                _ => None,
+            },
+        };
+
+        match ecies_receiver_seckey {
+            Some(seckey) => {
+                let ciphertext = &self.value.encrypted_share;
+                let msg = ecies_decrypt(ciphertext, &seckey);
+                Some(Share::parse_msg(&msg))
+            }
+            _ => None,
         }
     }
 }
@@ -135,7 +170,7 @@ mod tests {
 
         // Decrypt
         let decrypted_secret_share =
-            encrypted_share_root.recover_secret_share(&policy_tree, &my_seckeys);
+            encrypted_share_root.recover_secret_share_2(&policy_tree, &my_seckeys);
 
         assert_eq!(
             secret_share.serialize(),
@@ -163,7 +198,7 @@ mod tests {
 
         // Decrypt
         let decrypted_secret_share =
-            encrypted_share_root.recover_secret_share(&policy_tree, &my_seckeys);
+            encrypted_share_root.recover_secret_share_2(&policy_tree, &my_seckeys);
 
         assert_eq!(
             secret_share.serialize(),
