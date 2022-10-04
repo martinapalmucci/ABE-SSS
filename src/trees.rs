@@ -22,7 +22,7 @@ enum PolicyNode {
 
 #[derive(Debug, Clone)]
 pub struct ShareNode {
-    pub encrypted: Vec<u8>,
+    pub encrypted_share: Vec<u8>,
 }
 
 impl Node<PolicyNode> {
@@ -32,30 +32,33 @@ impl Node<PolicyNode> {
     ///
     /// * `secret_share` - Secret to split by SSS_making_share (if needed) and secure by ECIES_encrypt
     /// * `keypairs_pub` - An HashMap reference of attributes and their corresponding public key
-    pub fn gen_encrypted_shares(
+    pub fn generate_encrypt_shares(
         &self,
         secret_share: &Share,
         keypairs_pub: &HashMap<String, RistrettoPoint>,
     ) -> Node<ShareNode> {
-        let pubkey = match &self.value {
-            PolicyNode::Branch(_) => generate_public_key(&secret_share.serialize().1), // derived public key
-            PolicyNode::Leaf(a) => *keypairs_pub.get(a).unwrap(), // attribute public key
-        };
-        let mut list_children = vec![];
+        let mut share_children = vec![];
         if let PolicyNode::Branch(t) = &self.value {
             let schema = SSS::new(*t, self.children.len()).unwrap();
             let shares = schema.make_random_shares(secret_share.serialize().1);
-            for (policy_node, share) in self.children.iter().zip(&shares) {
-                let secret_child = policy_node.gen_encrypted_shares(share, keypairs_pub);
-                list_children.push(secret_child);
+            for (policy_child, share) in self.children.iter().zip(&shares) {
+                let share_child = policy_child.generate_encrypt_shares(share, keypairs_pub);
+                share_children.push(share_child);
             }
         };
+
+        let ecies_receiver_pubkey = match &self.value {
+            PolicyNode::Branch(_) => generate_public_key(&secret_share.serialize().1), // derived public key
+            PolicyNode::Leaf(a) => *keypairs_pub.get(a).unwrap(), // attribute public key
+        };
+        let share_value = ecies_encrypt(&secret_share.serialize_chain(), &ecies_receiver_pubkey);
+
         Node {
             name: self.name,
             value: ShareNode {
-                encrypted: ecies_encrypt(&secret_share.serialize_chain(), &pubkey),
+                encrypted_share: share_value,
             },
-            children: list_children,
+            children: share_children,
         }
     }
 }
@@ -76,17 +79,19 @@ impl Node<ShareNode> {
             PolicyNode::Branch(threshold) => {
                 let mut shares: Vec<Share> = Vec::new();
                 let joined_trees_iter = self.children.iter().zip(&policy_root.children);
-                for (share_node, policy_node) in joined_trees_iter {
-                    let out = share_node.recover_secret_share(policy_node, keypairs_sec);
-                    if let Some(share) = &out {
+                for (share_child, policy_child) in joined_trees_iter {
+                    let output = share_child.recover_secret_share(policy_child, keypairs_sec);
+                    if let Some(share) = &output {
                         shares.push(share.clone());
                     }
                 }
                 let schema = SSS::new(*threshold, shares.len());
                 match schema {
-                    Ok(sss) => {
+                    Ok(valid_sss) => {
+                        let ecies_receiver_seckey = &valid_sss.recover_secret(&shares);
+                        let ciphertext = &self.value.encrypted_share;
                         let msg =
-                            ecies_decrypt(&self.value.encrypted, &sss.recover_secret(&shares));
+                            ecies_decrypt(ciphertext, ecies_receiver_seckey);
                         Some(Share::parse_msg(&msg))
                     }
                     _ => None,
@@ -94,7 +99,9 @@ impl Node<ShareNode> {
             }
             PolicyNode::Leaf(a) => match keypairs_sec.get(a) {
                 Some(attribute_seckey) => {
-                    let msg = ecies_decrypt(&self.value.encrypted, attribute_seckey);
+                    let ecies_receiver_seckey = attribute_seckey;
+                    let ciphertext = &self.value.encrypted_share;
+                    let msg = ecies_decrypt(ciphertext, ecies_receiver_seckey);
                     Some(Share::parse_msg(&msg))
                 }
                 _ => None,
@@ -105,11 +112,9 @@ impl Node<ShareNode> {
 
 #[cfg(test)]
 mod tests {
-    use rand_core::OsRng;
-
-    use crate::utils::generate_keypair;
-
     use super::*;
+    use crate::utils::generate_keypair;
+    use rand_core::OsRng;
 
     #[test]
     fn encryption_decryption_test_1() {
@@ -122,7 +127,8 @@ mod tests {
         let secret_share = Share::new(Scalar::zero(), Scalar::random(&mut OsRng));
 
         // Encrypt
-        let encrypted_share_root = policy_tree.gen_encrypted_shares(&secret_share, &every_pubkeys);
+        let encrypted_share_root =
+            policy_tree.generate_encrypt_shares(&secret_share, &every_pubkeys);
 
         // Set user variables
         let my_seckeys = private_keys_example_1(&keypairs);
@@ -149,7 +155,8 @@ mod tests {
         let secret_share = Share::new(Scalar::zero(), Scalar::random(&mut OsRng));
 
         // Encrypt
-        let encrypted_share_root = policy_tree.gen_encrypted_shares(&secret_share, &every_pubkeys);
+        let encrypted_share_root =
+            policy_tree.generate_encrypt_shares(&secret_share, &every_pubkeys);
 
         // Set user variables
         let my_seckeys = private_keys_example_2(&keypairs);
@@ -163,8 +170,6 @@ mod tests {
             decrypted_secret_share.unwrap().serialize()
         );
     }
-
-    
 
     /// Example of Policy Tree
     fn policy_tree_example() -> Node<PolicyNode> {
