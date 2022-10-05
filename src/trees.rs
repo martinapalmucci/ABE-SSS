@@ -1,4 +1,5 @@
 use curve25519_dalek_ng::{ristretto::RistrettoPoint, scalar::Scalar};
+use rand_core::OsRng;
 use std::collections::HashMap;
 
 use crate::{
@@ -37,20 +38,36 @@ impl Node<PolicyNode> {
         secret_share: &Share,
         keypairs_pub: &HashMap<String, RistrettoPoint>,
     ) -> Node<ShareNode> {
-        let mut share_children = vec![];
-        if let PolicyNode::Branch(t) = &self.value {
-            let schema = SSS::new(*t, self.children.len()).unwrap();
-            let shares = schema.make_random_shares(secret_share.serialize().1);
-            for (policy_child, share) in self.children.iter().zip(&shares) {
-                let share_child = policy_child.generate_encrypt_shares(share, keypairs_pub);
-                share_children.push(share_child);
+        let (ecies_receiver_pubkey, children_shares) = match &self.value {
+            PolicyNode::Branch(t) => {
+                let ecies_receiver_seckey = Scalar::random(&mut OsRng);
+
+                // output 1 : ecies receiver's public key
+                let ecies_receiver_pubkey = generate_public_key(&ecies_receiver_seckey);
+
+                // output 2 : encrypted shares
+                let schema = SSS::new(*t, self.children.len()).unwrap();
+                let shares = schema.make_random_shares(ecies_receiver_seckey);
+
+                let mut share_children = vec![];
+                for (policy_child, share) in self.children.iter().zip(&shares) {
+                    let share_child = policy_child.generate_encrypt_shares(share, keypairs_pub);
+                    share_children.push(share_child);
+                }
+
+                (ecies_receiver_pubkey, share_children)
+            }
+            PolicyNode::Leaf(a) => {
+                // output 1 : ecies receiver's public key
+                let ecies_receiver_pubkey = *keypairs_pub.get(a).unwrap(); // attribute public key
+
+                // output 2 : encrypted shares
+                let share_children = vec![];
+
+                (ecies_receiver_pubkey, share_children)
             }
         };
 
-        let ecies_receiver_pubkey = match &self.value {
-            PolicyNode::Branch(_) => generate_public_key(&secret_share.serialize().1), // derived public key
-            PolicyNode::Leaf(a) => *keypairs_pub.get(a).unwrap(), // attribute public key
-        };
         let share_value = ecies_encrypt(&secret_share.serialize_chain(), &ecies_receiver_pubkey);
 
         Node {
@@ -58,7 +75,7 @@ impl Node<PolicyNode> {
             value: ShareNode {
                 encrypted_share: share_value,
             },
-            children: share_children,
+            children: children_shares,
         }
     }
 }
