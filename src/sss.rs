@@ -44,6 +44,10 @@ impl Share {
         let (x, y) = self.serialize();
         concat_arrays(x.to_bytes(), y.to_bytes())
     }
+
+    pub fn get_secret(&self) -> Scalar {
+        self.y
+    }
 }
 
 #[derive(Debug, Clone)]

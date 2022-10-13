@@ -9,14 +9,14 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
-struct Node<T> {
-    name: u32,
-    value: T,
-    children: Vec<Node<T>>,
+pub struct Node<T> {
+    pub name: u32,
+    pub value: T,
+    pub children: Vec<Node<T>>,
 }
 
 #[derive(Debug, Clone)]
-enum PolicyNode {
+pub enum PolicyNode {
     Leaf(String),
     Branch(usize),
 }
