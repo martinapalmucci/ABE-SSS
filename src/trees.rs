@@ -38,7 +38,7 @@ impl Node<PolicyNode> {
         secret_share: &Share,
         keypairs_pub: &HashMap<String, RistrettoPoint>,
     ) -> Node<ShareNode> {
-        let (ecies_receiver_pubkey, children_shares) = match &self.value {
+        let (ecies_receiver_pubkey, share_children) = match &self.value {
             PolicyNode::Branch(t) => {
                 let ecies_receiver_seckey = Scalar::random(&mut OsRng);
 
@@ -75,7 +75,7 @@ impl Node<PolicyNode> {
             value: ShareNode {
                 encrypted_share: share_value,
             },
-            children: children_shares,
+            children: share_children,
         }
     }
 }
