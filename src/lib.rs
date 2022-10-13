@@ -7,6 +7,7 @@ pub mod utils;
 
 fn concat_arrays<const N: usize, const M: usize>(fst: [u8; N], snd: [u8; M]) -> Vec<u8> {
     let mut result = Vec::new();
+    result.reserve(N + M);
     for n in 0..(N + M) {
         let cond = n < N;
         let i = if cond { n } else { n - N };
