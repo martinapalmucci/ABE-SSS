@@ -107,10 +107,7 @@ impl Node<ShareNode> {
                     _ => None,
                 }
             }
-            PolicyNode::Leaf(a) => match keypairs_sec.get(a) {
-                Some(attribute_seckey) => Some(attribute_seckey.clone()),
-                _ => None,
-            },
+            PolicyNode::Leaf(a) => keypairs_sec.get(a).copied(),
         };
 
         match ecies_receiver_seckey {

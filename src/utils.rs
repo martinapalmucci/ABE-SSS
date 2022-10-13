@@ -21,8 +21,7 @@ pub fn generate_keypair() -> (Scalar, RistrettoPoint) {
 
 pub fn generate_public_key(private_key: &Scalar) -> RistrettoPoint {
     let generator = constants::RISTRETTO_BASEPOINT_TABLE;
-    let public_key = private_key * &generator;
-    public_key
+    private_key * &generator
 }
 
 /// Returns the symmetric cipher key for ECIES.

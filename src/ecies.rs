@@ -18,7 +18,7 @@ use crate::{
 pub fn ecies_encrypt(msg: &[u8], receiver_pub: &RistrettoPoint) -> Vec<u8> {
     let (ephemeral_sk, ephemeral_pk) = generate_keypair();
 
-    let chacha_key = key_derivation_fn(&ephemeral_sk, &receiver_pub);
+    let chacha_key = key_derivation_fn(&ephemeral_sk, receiver_pub);
     let encrypted_msg = chacha20poly1305_encrypt(&chacha_key, msg);
 
     let mut ciphertext: Vec<u8> = Vec::new();
@@ -41,7 +41,7 @@ pub fn ecies_decrypt(msg: &[u8], receiver_sec: &Scalar) -> Vec<u8> {
         .decompress()
         .unwrap();
 
-    let chacha_key = key_derivation_fn(&receiver_sec, &ephemeral_pk);
+    let chacha_key = key_derivation_fn(receiver_sec, &ephemeral_pk);
     chacha20poly1305_decrypt(&chacha_key, encrypted)
 }
 
