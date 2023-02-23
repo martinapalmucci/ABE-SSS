@@ -40,37 +40,3 @@ Interpolation can be used to obtain $a_0$ from any subset of $t$ of these pairs.
 $$ L(x):=\sum_{j=0}^{t-1}y_jl_j(x) \bmod q$$ of Lagrange basis polynomials
 $$ l_j(x):=\prod_{\begin{array}{cc} 0\le m\le t\\ m\ne j \end{array}} \frac{x-x_m} {x_j-x_m} $$
 where $0\le j\le t$.
-
-[comment] <> Add how it was done: library, etc
-
-
-
-## Errors
-
-In SSS algorithm:
-    In computing shares:
-
-        * must be threshold >= 1 otherwise InvalidThreshold (threshold must be natural number)
-        * must be threshold <= n_shares otherwise InvalidSchema (threshold must not be greater then number of shares)
-
-    In recover secret:
-
-        * must be n_shares >= 1 otherwise InvalidShares (number of shares must not be less then one)
-        * must be n_shares >= threshold otherwise UnrecoverableSecret (number of shares must not be less then threshold)
-
-In Encryption/Decryption Message algorithm:
-
-    In encryption:
-
-        * encryption failure
-
-    In decryption:
-
-        * invalid message read
-        * decryption failure
-        
-In Tree Generation/Ecryption/Decryption:
-
-    * attribute not in attribute_keypair_hashmap (in generate_encrypted_shares)
-    * conversion from &[u8] to Scalar (in decode)
-    * decryption failure, root is still encrypted
